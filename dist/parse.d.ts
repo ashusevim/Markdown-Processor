@@ -16,7 +16,7 @@
  *   info    — deliberate repairs or unsupported-syntax notices; never blocks --strict
  */
 export type IssueSeverity = "warning" | "info";
-export type IssueCode = "unclosed-fence" | "unclosed-inline-code" | "unclosed-bold" | "unclosed-strikethrough" | "heading-skip" | "list-interrupted" | "mixed-list-markers" | "frontmatter-unsupported";
+export type IssueCode = "unclosed-fence" | "unclosed-inline-code" | "unclosed-bold" | "unclosed-strikethrough" | "heading-skip" | "list-interrupted" | "mixed-list-markers" | "frontmatter-unsupported" | "html-escaped";
 export interface Issue {
     /** 1-based source line where the issue was detected. */
     line: number;
@@ -37,7 +37,15 @@ export interface ParseResult {
     headings: HeadingRef[];
     words: number;
 }
-/** Backward-compatible entry point: HTML only, diagnostics discarded. */
-export declare function parseMarkdown(source: string): string;
+/** Options for the parse entry points. */
+export interface ParseOptions {
+    /**
+     * When true, raw HTML passes through unescaped (for trusted input).
+     * Default: false — raw HTML is escaped to visible text (safe mode).
+     */
+    unsafeHtml?: boolean;
+}
+/** HTML-only entry point: diagnostics discarded. */
+export declare function parseMarkdown(source: string, options?: ParseOptions): string;
 /** Full entry point: HTML plus issues, heading map and word count. */
-export declare function parseMarkdownDetail(source: string): ParseResult;
+export declare function parseMarkdownDetail(source: string, options?: ParseOptions): ParseResult;

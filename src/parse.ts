@@ -26,7 +26,8 @@ export type IssueCode =
     | "heading-skip"
     | "list-interrupted"
     | "mixed-list-markers"
-    | "frontmatter-unsupported";
+    | "frontmatter-unsupported"
+    | "html-escaped";
 
 export interface Issue {
     /** 1-based source line where the issue was detected. */
@@ -58,6 +59,8 @@ interface Ctx {
     words: number;
     /** 0-based offset making nested (blockquote) line numbers absolute. */
     lineOffset: number;
+    /** Safe mode: raw HTML is escaped to text instead of passed through. */
+    safe: boolean;
 }
 
 /** Normalize CRLF / lone CR to LF so regexes and line handling stay predictable. */
@@ -79,12 +82,20 @@ function escapeAttr(text: string): string {
 }
 
 /**
- * Inline-level formatting: code spans, images, links, emphasis, autolinks.
- * Order matters: code spans are protected first (nothing inside them is
- * formatted, their content is HTML-escaped), then images/links (so emphasis
- * rules never touch URL attributes), then emphasis, then code spans restored.
+ * Inline-level formatting: code spans, autolinks, safe-mode HTML neutralization,
+ * images, links, emphasis.
+ *
+ * Order matters:
+ *  1. code spans are protected first (nothing inside them is formatted, their
+ *     content is HTML-escaped),
+ *  2. angle autolinks are protected next — they are markdown syntax, not raw
+ *     HTML, so they must survive safe-mode escaping,
+ *  3. in safe mode remaining `<`/`>` (and bare `&`) are neutralized so untrusted
+ *     markup renders as visible text,
+ *  4. then images/links/emphasis run (their generated tags are marcus's own),
+ *  5. finally the protected runs are restored.
  */
-function inline(text: string): string {
+function inline(text: string, safe: boolean): string {
     // 1. Protect code spans behind placeholders.
     const codeSpans: string[] = [];
     let t = text.replace(/`([^`\n]+)`/g, (_match: string, code: string) => {
@@ -92,21 +103,37 @@ function inline(text: string): string {
         return `\u0000${codeSpans.length - 1}\u0001`;
     });
 
-    // 2. Images: ![alt](src "title")
+    // 2. Protect angle autolinks: <https://example.com>
+    const autolinks: string[] = [];
+    t = t.replace(/<(https?:\/\/[^ \t>]+)>/g, (_m: string, url: string) => {
+        autolinks.push(`<a href="${escapeAttr(url)}">${escapeHtml(url)}</a>`);
+        return `\u0002${autolinks.length - 1}\u0003`;
+    });
+
+    // 3. Safe mode: neutralize HTML. Already-escaped entities (&amp;, &lt;, …)
+    // are preserved; a bare '&' is completed so the output stays valid HTML.
+    if (safe) {
+        t = t
+            .replace(/&(?![a-zA-Z][a-zA-Z0-9]*;|#[0-9]+;|#[xX][0-9a-fA-F]+;)/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;");
+    }
+
+    // 4. Images: ![alt](src "title")
     t = t.replace(
         /!\[([^\]]*)\]\(([^)\s]+)(?:[ \t]+"([^"]*)")?\)/g,
         (_m: string, alt: string, src: string, title?: string) =>
             `<img src="${escapeAttr(src)}"${title ? ` title="${escapeAttr(title)}"` : ""} alt="${escapeAttr(alt)}">`,
     );
 
-    // 3. Links: [label](href "title")
+    // 5. Links: [label](href "title")
     t = t.replace(
         /\[([^\]]*)\]\(([^)\s]+)(?:[ \t]+"([^"]*)")?\)/g,
         (_m: string, label: string, href: string, title?: string) =>
             `<a href="${escapeAttr(href)}"${title ? ` title="${escapeAttr(title)}"` : ""}>${label}</a>`,
     );
 
-    // 4. Emphasis. Guards on `_` prevent italics inside snake_case words.
+    // 6. Emphasis. Guards on `_` prevent italics inside snake_case words.
     t = t.replace(/\*\*\*(?=\S)([\s\S]*?\S)\*\*\*/g, "<strong><em>$1</em></strong>");
     t = t.replace(/\*\*(?=\S)([\s\S]*?\S)\*\*/g, "<strong>$1</strong>");
     t = t.replace(/(?<![\w_])__(?=\S)([\s\S]*?\S)__(?![\w_])/g, "<strong>$1</strong>");
@@ -114,10 +141,8 @@ function inline(text: string): string {
     t = t.replace(/(?<![\w_])_(?=\S)([^_\n]*\S)_(?![\w_])/g, "<em>$1</em>");
     t = t.replace(/~~(?=\S)([\s\S]*?\S)~~/g, "<del>$1</del>");
 
-    // 5. Autolinks in angle form: <https://example.com>
-    t = t.replace(/<(https?:\/\/[^ \t>]+)>/g, '<a href="$1">$1</a>');
-
-    // 6. Restore code spans.
+    // 7. Restore protected runs.
+    t = t.replace(/\u0002(\d+)\u0003/g, (_m: string, index: string) => autolinks[Number(index)]!);
     t = t.replace(/\u0000(\d+)\u0001/g, (_m: string, index: string) => codeSpans[Number(index)]!);
     return t;
 }
@@ -127,14 +152,29 @@ function countWords(text: string): number {
     return text.replace(/[`*_~]/g, " ").split(/\s+/).filter(Boolean).length;
 }
 
-/** Backward-compatible entry point: HTML only, diagnostics discarded. */
-export function parseMarkdown(source: string): string {
-    return parseMarkdownDetail(source).html;
+/** Options for the parse entry points. */
+export interface ParseOptions {
+    /**
+     * When true, raw HTML passes through unescaped (for trusted input).
+     * Default: false — raw HTML is escaped to visible text (safe mode).
+     */
+    unsafeHtml?: boolean;
+}
+
+/** HTML-only entry point: diagnostics discarded. */
+export function parseMarkdown(source: string, options?: ParseOptions): string {
+    return parseMarkdownDetail(source, options).html;
 }
 
 /** Full entry point: HTML plus issues, heading map and word count. */
-export function parseMarkdownDetail(source: string): ParseResult {
-    const ctx: Ctx = { issues: [], headings: [], words: 0, lineOffset: 0 };
+export function parseMarkdownDetail(source: string, options?: ParseOptions): ParseResult {
+    const ctx: Ctx = {
+        issues: [],
+        headings: [],
+        words: 0,
+        lineOffset: 0,
+        safe: options?.unsafeHtml !== true,
+    };
     const html = parseBlocks(normalizeNewlines(source), ctx);
     return { html, issues: ctx.issues, headings: ctx.headings, words: ctx.words };
 }
@@ -174,7 +214,7 @@ function parseBlocks(source: string, ctx: Ctx): string {
     const flushParagraph = (): void => {
         if (paragraph.length === 0) return;
         inlineChecks(paragraph.join("\n"), paragraphStart);
-        out.push(`<p>${inline(paragraph.join("\n"))}</p>`);
+        out.push(`<p>${inline(paragraph.join("\n"), ctx.safe)}</p>`);
         paragraph = [];
     };
     const closeList = (): void => {
@@ -247,7 +287,7 @@ function parseBlocks(source: string, ctx: Ctx): string {
             prevHeadingLevel = level;
             ctx.headings.push({ level, text, line: ctx.lineOffset + i + 1 });
             ctx.words += countWords(text);
-            out.push(`<h${level}>${inline(text)}</h${level}>`);
+            out.push(`<h${level}>${inline(text, ctx.safe)}</h${level}>`);
             continue;
         }
 
@@ -267,6 +307,7 @@ function parseBlocks(source: string, ctx: Ctx): string {
                 headings: ctx.headings,
                 words: ctx.words,
                 lineOffset: ctx.lineOffset + quoteStart,
+                safe: ctx.safe,
             });
             out.push(rendered === "" ? "<blockquote></blockquote>" : `<blockquote>\n${rendered}\n</blockquote>`);
             continue;
@@ -289,12 +330,15 @@ function parseBlocks(source: string, ctx: Ctx): string {
             const text = (ulItem ?? olItem)![1]!;
             inlineChecks(text, i);
             ctx.words += countWords(text);
-            out.push(`<li>${inline(text)}</li>`);
+            out.push(`<li>${inline(text, ctx.safe)}</li>`);
             continue;
         }
 
-        // -- raw HTML passthrough line (kept verbatim, no inline processing) ----
-        if (/^ {0,3}<[A-Za-z/!]/.test(line)) {
+        // -- raw HTML passthrough line --------------------------------------------
+        // Unsafe mode: verbatim block, no inline processing.
+        // Safe mode (default): falls through to paragraph text, escaped inline.
+        const looksLikeHtml = /^ {0,3}<[A-Za-z/!]/.test(line);
+        if (looksLikeHtml && !ctx.safe) {
             flushParagraph();
             closeList();
             out.push(line.trim());
@@ -305,6 +349,9 @@ function parseBlocks(source: string, ctx: Ctx): string {
         if (listType !== null) {
             addIssue(i, "list-interrupted", "info", "non-list line implicitly closes the open list here");
             closeList();
+        }
+        if (looksLikeHtml) {
+            addIssue(i, "html-escaped", "info", "raw HTML here was escaped to text — pass --unsafe to keep it as markup");
         }
         if (paragraph.length === 0) paragraphStart = i;
         paragraph.push(line);

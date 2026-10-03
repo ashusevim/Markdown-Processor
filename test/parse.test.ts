@@ -180,10 +180,10 @@ test("blockquote content is parsed recursively", () => {
     );
 });
 
-// -- raw HTML passthrough ---------------------------------------------------------------
+// -- raw HTML (safe mode is the default since v2.0.0; see safe-mode tests) ----
 
-test("raw HTML lines pass through without inline processing", () => {
-    assert.equal(parseMarkdown("<div class=x>raw</div>"), "<div class=x>raw</div>");
+test("raw HTML lines are escaped to text by default", () => {
+    assert.equal(parseMarkdown("<div class=x>raw</div>"), "<p>&lt;div class=x&gt;raw&lt;/div&gt;</p>");
 });
 
 // -- normalization -----------------------------------------------------------------------

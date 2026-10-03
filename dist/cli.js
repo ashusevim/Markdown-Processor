@@ -22,6 +22,10 @@ an explicit "-"), Markdown is read from stdin — handy in pipes:
 Unlike other converters, marcus reports render-affecting problems on stderr
 with line numbers instead of producing silently wrong HTML.
 
+By default, raw HTML in the input is escaped to visible text — safe for
+untrusted content such as LLM or user output. Pass --unsafe for trusted
+documents that embed real HTML.
+
 Options:
   -h, --help       show this help and exit
   -V, --version    print version and exit
@@ -29,6 +33,7 @@ Options:
   --strict         exit 1 if any warning-level issue is found (CI gate)
   --report json    print a JSON report (html, issues, stats) instead of HTML
   -q, --quiet      don't mirror issues to stderr
+  --unsafe         allow raw HTML through unescaped (for trusted input)
 
 Exit codes:
   0  success (or only info-level issues)
@@ -48,6 +53,7 @@ Issue codes:
   list-interrupted        non-list line implicitly closed an open list
   mixed-list-markers      list marker style switched mid-list
   frontmatter-unsupported '---' frontmatter detected; not supported yet
+  html-escaped            raw HTML was escaped in safe mode (--unsafe keeps it)
 `;
 /** Thrown by parseArgs for unrecognized options; maps to exit code 2. */
 class UsageError extends Error {
@@ -59,6 +65,7 @@ function parseArgs(argv) {
     let strict = false;
     let quiet = false;
     let report = null;
+    let unsafeHtml = false;
     let onlyFiles = false;
     for (let i = 0; i < argv.length; i++) {
         const arg = argv[i];
@@ -75,6 +82,8 @@ function parseArgs(argv) {
                 strict = true;
             else if (arg === "-q" || arg === "--quiet")
                 quiet = true;
+            else if (arg === "--unsafe")
+                unsafeHtml = true;
             else if (arg === "--report") {
                 const value = argv[i + 1];
                 if (value === undefined)
@@ -90,7 +99,7 @@ function parseArgs(argv) {
         }
         files.push(arg);
     }
-    return { files, help, version, strict, quiet, report };
+    return { files, help, version, strict, quiet, report, unsafeHtml };
 }
 /** Read all of stdin. Empty string if stdin is closed or empty. */
 async function readStdin() {
@@ -136,7 +145,7 @@ async function main() {
     for (const file of files) {
         try {
             const markdown = file === "-" ? await readStdin() : await readFile(file, "utf8");
-            const result = parseMarkdownDetail(markdown);
+            const result = parseMarkdownDetail(markdown, { unsafeHtml: opts.unsafeHtml });
             for (const issue of result.issues) {
                 allIssues.push({ ...issue, file });
                 if (!opts.quiet) {

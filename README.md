@@ -8,10 +8,11 @@ Converts Markdown to clean, semantic HTML fragments on stdout — built for pipe
 
 - **Zero runtime dependencies** — the whole tool is a few hundred lines you can audit in one sitting.
 - **Pipeline-first** — stdin in, HTML out, exit codes that mean something.
+- **Safe by default** — raw HTML from untrusted sources (users, LLMs) is escaped to visible text; `--unsafe` for trusted documents. Most converters do the opposite and warn you to "sanitize yourself".
 - **Tells you the truth** — render-affecting problems come back as line-numbered warnings (`--strict`, `--report json`), not silently wrong HTML.
 - **Library and CLI in one** — the CLI is a thin wrapper around a pure parser module.
 
-> Roadmap: marcus is becoming the *trust-boundary* markdown CLI — see [RESEARCH.md](RESEARCH.md). ✅ Phase 1 correctness rework · ✅ Phase 2 diagnostics engine · next: phase 3 safe-by-default HTML escaping, phase 4 LLM-output repair pack.
+> Roadmap: marcus is becoming the *trust-boundary* markdown CLI — see [RESEARCH.md](RESEARCH.md). ✅ Phase 1 correctness rework · ✅ Phase 2 diagnostics engine · ✅ Phase 3 safe by default · next: phase 4 LLM-output repair pack (`--fix-llm`).
 
 ## Install
 
@@ -53,6 +54,7 @@ parseMarkdown("# hi\n\n**bold** and [a link](https://ex.com)");
 | `--strict` | exit 1 if any warning-level issue is found (CI gate) |
 | `--report json` | print a JSON report (html, issues, stats) instead of HTML |
 | `-q`, `--quiet` | don't mirror issues to stderr |
+| `--unsafe` | allow raw HTML through unescaped (for trusted input) |
 
 ## Exit codes
 
@@ -76,7 +78,7 @@ parseMarkdown("# hi\n\n**bold** and [a link](https://ex.com)");
 - Strikethrough: `~~text~~`
 - Inline code: `` `code` `` (HTML inside is escaped)
 - Paragraphs: consecutive text lines are wrapped in `<p>`; blank lines separate them
-- Raw HTML passthrough: lines starting with a tag are emitted verbatim
+- Raw HTML: escaped to visible text by default (safe — script tags become inert text); `--unsafe` passes it through verbatim
 
 ## Diagnostics (the marcus difference)
 
@@ -102,6 +104,7 @@ marcus: doc.md:5: warning [unclosed-fence]: code fence opened here is never clos
 | `list-interrupted` | a non-list line implicitly closed an open list |
 | `mixed-list-markers` | list marker style switched mid-list |
 | `frontmatter-unsupported` | `---` frontmatter detected; not supported yet (renders as `<hr>`) |
+| `html-escaped` | raw HTML was neutralized in safe mode (`--unsafe` keeps it) |
 
 ### CI gate
 
@@ -118,7 +121,7 @@ marcus --report json doc.md
 ```json
 {
   "tool": "marcus",
-  "version": "1.2.0",
+  "version": "2.0.0",
   "files": [{ "file": "doc.md", "html": "…", "words": 5, "headings": [] }],
   "issues": [{ "file": "doc.md", "line": 5, "code": "unclosed-fence", "severity": "warning", "message": "…" }],
   "stats": { "files": 1, "words": 5, "readingTimeMinutes": 1, "warnings": 1, "infos": 0 }
@@ -154,9 +157,9 @@ test/*.test.ts   node:test suite (runs TS directly via Node type stripping)
 
 ## Limitations (known, deliberate)
 
-- No nested lists, tables, task lists or footnotes yet — planned alongside the phase 3/4 work.
+- No nested lists, tables, task lists or footnotes yet — planned alongside the phase 4 work.
 - Frontmatter (`---` at the top) currently renders as a thematic break (reported as info).
-- Raw HTML is passed through unescaped by design for now — safe-by-default escaping lands in phase 3.
+- Safe mode is *escape-all*, not an allowlist sanitizer: no HTML survives by default (even harmless `<b>`). For fine-grained sanitization with `--unsafe`, pipe the output through a dedicated sanitizer.
 - A blank line inside a list keeps the list open but does not create loose (`<p>`-in-`<li>`) items.
 
 ## License

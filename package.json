@@ -1,24 +1,43 @@
 {
   "name": "markdown-processor",
-  "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
-  "scripts": {
-    "dev": "tsx watch src/index.ts",
-    "build": "tsc",
-    "start": "node dist/index.js"
+  "version": "1.1.0",
+  "description": "marcus — a zero-dependency Markdown to HTML CLI and library",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
   },
-  "keywords": [],
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "bin": {
+    "marcus": "./dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc && node -e \"require('fs').chmodSync('dist/cli.js', 0o755)\"",
+    "pretest": "npm run build",
+    "test": "node --test \"test/*.test.ts\"",
+    "start": "node dist/cli.js"
+  },
+  "keywords": [
+    "markdown",
+    "html",
+    "cli",
+    "converter",
+    "markdown-to-html"
+  ],
   "author": "",
   "license": "ISC",
   "devDependencies": {
-    "typescript": "^5.9.2"
-  },
-  "dependencies": {
     "@types/node": "^24.3.0",
-    "commander": "^14.0.0"
-  },
-  "bin": {
-    "marcus": "./dist/index.js"
+    "typescript": "^5.9.2"
   }
 }

@@ -17,8 +17,9 @@ Converts Markdown to clean, semantic HTML fragments on stdout — built for pipe
 ## Install
 
 ```bash
-npm install -g .          # exposes `marcus`
+npm install -g @ashusevim/markdown-processor   # exposes `marcus`
 # or use without installing:
+npx --package @ashusevim/markdown-processor marcus file.md
 node dist/cli.js file.md
 ```
 
@@ -37,7 +38,7 @@ marcus --help
 Programmatic use:
 
 ```js
-import { parseMarkdown } from "markdown-processor";
+import { parseMarkdown } from "@ashusevim/markdown-processor";
 
 parseMarkdown("# hi\n\n**bold** and [a link](https://ex.com)");
 // → '<h1>hi</h1>\n<p><strong>bold</strong> and <a href="https://ex.com">a link</a></p>'
@@ -156,7 +157,7 @@ llm | marcus --fix-llm > clean.html     # safe + repaired, every change logged
 Library API:
 
 ```js
-import { parseMarkdownDetail } from "markdown-processor";
+import { parseMarkdownDetail } from "@ashusevim/markdown-processor";
 
 const { html, issues, headings, words } = parseMarkdownDetail(source);
 ```

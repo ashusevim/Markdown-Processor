@@ -1,8 +1,8 @@
 /**
  * Library entry point:
  *
- *   import { parseMarkdown } from "markdown-processor";              // → html
- *   import { parseMarkdownDetail } from "markdown-processor";        // → + issues/headings/stats
+ *   import { parseMarkdown } from "@ashusevim/markdown-processor";              // → html
+ *   import { parseMarkdownDetail } from "@ashusevim/markdown-processor";        // → + issues/headings/stats
  *
  * The executable entry point is `dist/cli.js` (see the `bin` field).
  */

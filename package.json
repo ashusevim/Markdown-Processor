@@ -1,8 +1,12 @@
 {
-  "name": "markdown-processor",
+  "name": "@ashusevim/markdown-processor",
+  "publishConfig": {
+    "access": "public"
+  },
   "version": "2.2.0",
-  "description": "marcus — a zero-dependency Markdown to HTML CLI and library",
+  "description": "marcus — a zero-dependency Markdown to HTML CLI and library that verifies its own output: safe-by-default escaping, line-numbered diagnostics for CI, and LLM-artifact repair",
   "type": "module",
+  "sideEffects": false,
   "engines": {
     "node": ">=20"
   },
@@ -32,10 +36,25 @@
     "html",
     "cli",
     "converter",
-    "markdown-to-html"
+    "markdown-to-html",
+    "markdown-parser",
+    "diagnostics",
+    "llm",
+    "llm-output",
+    "sanitize",
+    "security",
+    "zero-dependency"
   ],
-  "author": "",
+  "author": "Ashish Prajapati",
   "license": "ISC",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ashusevim/Markdown-Processor.git"
+  },
+  "homepage": "https://github.com/ashusevim/Markdown-Processor#readme",
+  "bugs": {
+    "url": "https://github.com/ashusevim/Markdown-Processor/issues"
+  },
   "devDependencies": {
     "@types/node": "^24.3.0",
     "typescript": "^5.9.2"

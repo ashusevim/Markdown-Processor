@@ -24,7 +24,7 @@ test("BOM + CRLF together (Windows editor file) parse cleanly", () => {
 
 test("CLI: BOM input converts from stdin and from a file", () => {
     const piped = spawnSync(process.execPath, [CLI], { input: "\uFEFF# Hi", encoding: "utf8" });
-    assert.equal(piped.stdout, "<h1>Hi</h1>");
+    assert.equal(piped.stdout, "<h1>Hi</h1>\n");
 });
 
 // -- issue ordering (end-to-end finding: repairs and deferred checks interleaved) --

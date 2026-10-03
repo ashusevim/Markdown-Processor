@@ -107,7 +107,7 @@ test("CLI --fix-llm repairs artifacts end to end", () => {
 
 test("CLI without --fix-llm leaves artifacts alone", () => {
     const r = spawnSync(process.execPath, [CLI], { input: "#Broken\n", encoding: "utf8" });
-    assert.equal(r.stdout, "<p>#Broken</p>");
+    assert.equal(r.stdout, "<p>#Broken</p>\n");
     assert.equal(r.stderr, "");
 });
 

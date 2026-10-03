@@ -147,7 +147,6 @@ async function main() {
         return;
     }
     let hadError = false;
-    let wroteAny = false;
     const fileReports = [];
     const allIssues = [];
     let totalWords = 0;
@@ -165,10 +164,9 @@ async function main() {
             fileReports.push({ file, html: result.html, words: result.words, headings: result.headings });
             if (opts.report === "json")
                 continue;
-            if (wroteAny)
-                process.stdout.write("\n");
-            process.stdout.write(result.html);
-            wroteAny = true;
+            // Every document ends with exactly one newline: multi-file output
+            // stays separable and a terminal prompt never glues to the HTML.
+            process.stdout.write(`${result.html}\n`);
         }
         catch (error) {
             const message = error instanceof Error ? error.message : String(error);

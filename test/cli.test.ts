@@ -31,13 +31,13 @@ test("--help prints usage", () => {
 test("reads markdown from piped stdin without a file argument", () => {
     const r = run([], "## hello");
     assert.equal(r.status, 0);
-    assert.equal(r.stdout, "<h2>hello</h2>");
+    assert.equal(r.stdout, "<h2>hello</h2>\n");
 });
 
 test("explicit - argument reads stdin", () => {
     const r = run(["-"], "# title");
     assert.equal(r.status, 0);
-    assert.equal(r.stdout, "<h1>title</h1>");
+    assert.equal(r.stdout, "<h1>title</h1>\n");
 });
 
 test("converts a file argument", () => {
@@ -47,7 +47,7 @@ test("converts a file argument", () => {
         writeFileSync(file, "# hi\n\n**bold**");
         const r = run([file]);
         assert.equal(r.status, 0);
-        assert.equal(r.stdout, "<h1>hi</h1>\n<p><strong>bold</strong></p>");
+        assert.equal(r.stdout, "<h1>hi</h1>\n<p><strong>bold</strong></p>\n");
     } finally {
         rmSync(dir, { recursive: true, force: true });
     }
@@ -62,7 +62,7 @@ test("converts multiple files in order", () => {
         writeFileSync(b, "# B");
         const r = run([a, b]);
         assert.equal(r.status, 0);
-        assert.equal(r.stdout, "<h1>A</h1>\n<h1>B</h1>");
+        assert.equal(r.stdout, "<h1>A</h1>\n<h1>B</h1>\n");
     } finally {
         rmSync(dir, { recursive: true, force: true });
     }

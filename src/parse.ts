@@ -323,7 +323,7 @@ function repairLlmArtifacts(
                 const fixed: string[] = [];
                 for (let c = 0; c < headerCells.length; c++) fixed.push(delimCells[c] ?? "---");
                 lines[i] = `| ${fixed.join(" | ")} |`;
-                addRepair(i, "repaired-table-delimiter", `table delimiter row had ${delimCells.length} column(s) but the header has ${headerCells.length} — resized so the table renders`);
+                addRepair(i, "repaired-table-delimiter", `delimiter row had ${delimCells.length} column(s) but the header has ${headerCells.length} — resized to match`);
             }
             continue;
         }

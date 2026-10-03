@@ -1,1 +1,4 @@
 /node_modules
+/.tools/
+/.npm-cache-tmp/
+/.pkgtest/

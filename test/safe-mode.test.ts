@@ -72,14 +72,14 @@ test("unsafeHtml: no html-escaped issues", () => {
 test("CLI default escapes raw HTML and reports it on stderr", () => {
     const r = spawnSync(process.execPath, [CLI], { input: "<div>x</div>", encoding: "utf8" });
     assert.equal(r.status, 0);
-    assert.equal(r.stdout, "<p>&lt;div&gt;x&lt;/div&gt;</p>");
+    assert.equal(r.stdout, "<p>&lt;div&gt;x&lt;/div&gt;</p>\n");
     assert.match(r.stderr, /info \[html-escaped\]/);
 });
 
 test("CLI --unsafe restores passthrough without noise", () => {
     const r = spawnSync(process.execPath, [CLI, "--unsafe"], { input: "<div>x</div>", encoding: "utf8" });
     assert.equal(r.status, 0);
-    assert.equal(r.stdout, "<div>x</div>");
+    assert.equal(r.stdout, "<div>x</div>\n");
     assert.equal(r.stderr, "");
 });
 

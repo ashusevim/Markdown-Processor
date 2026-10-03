@@ -12,7 +12,7 @@ Converts Markdown to clean, semantic HTML fragments on stdout — built for pipe
 - **Tells you the truth** — render-affecting problems come back as line-numbered warnings (`--strict`, `--report json`), not silently wrong HTML.
 - **Library and CLI in one** — the CLI is a thin wrapper around a pure parser module.
 
-> Roadmap: marcus is becoming the *trust-boundary* markdown CLI — see [RESEARCH.md](RESEARCH.md). ✅ Phase 1 correctness rework · ✅ Phase 2 diagnostics engine · ✅ Phase 3 safe by default · next: phase 4 LLM-output repair pack (`--fix-llm`).
+> Roadmap: marcus is becoming the *trust-boundary* markdown CLI — see [RESEARCH.md](RESEARCH.md). ✅ Phase 1 correctness rework · ✅ Phase 2 diagnostics engine · ✅ Phase 3 safe by default · ✅ Phase 4 LLM-output repair pack.
 
 ## Install
 
@@ -55,6 +55,7 @@ parseMarkdown("# hi\n\n**bold** and [a link](https://ex.com)");
 | `--report json` | print a JSON report (html, issues, stats) instead of HTML |
 | `-q`, `--quiet` | don't mirror issues to stderr |
 | `--unsafe` | allow raw HTML through unescaped (for trusted input) |
+| `--fix-llm` | repair common LLM-output artifacts before parsing; every repair logged |
 
 ## Exit codes
 
@@ -105,6 +106,7 @@ marcus: doc.md:5: warning [unclosed-fence]: code fence opened here is never clos
 | `mixed-list-markers` | list marker style switched mid-list |
 | `frontmatter-unsupported` | `---` frontmatter detected; not supported yet (renders as `<hr>`) |
 | `html-escaped` | raw HTML was neutralized in safe mode (`--unsafe` keeps it) |
+| `repaired-*` | LLM artifact fixed by `--fix-llm` (info-level, never blocks) |
 
 ### CI gate
 
@@ -124,11 +126,27 @@ marcus --report json doc.md
   "version": "2.0.0",
   "files": [{ "file": "doc.md", "html": "…", "words": 5, "headings": [] }],
   "issues": [{ "file": "doc.md", "line": 5, "code": "unclosed-fence", "severity": "warning", "message": "…" }],
-  "stats": { "files": 1, "words": 5, "readingTimeMinutes": 1, "warnings": 1, "infos": 0 }
+  "stats": { "files": 1, "words": 5, "readingTimeMinutes": 1, "warnings": 1, "infos": 0, "repairs": 0 }
 }
 ```
 
 Reports are deterministic — same input produces byte-identical output (no timestamps), safe to cache and diff.
+
+### LLM output repair (`--fix-llm`)
+
+LLM-generated markdown breaks in known, repeated ways (unclosed fences, mangled headings, stray tokens). `--fix-llm` repairs the well-understood ones before parsing — and **logs every repair** as an info issue, so a repaired document is never silently rewritten:
+
+| Repair | Before → After |
+|---|---|
+| `repaired-heading-space` | `##Title` → `## Title` |
+| `repaired-frontmatter-fence` | frontmatter wrapped in a ` ```yaml ` fence → unwrapped |
+| `repaired-proved-block` | stray ` proved` line (the classic artifact) → ` proved` |
+
+Repairs are conservative by design: code fences are never touched, prose is never rewritten (only whole-line artifact matches), and line numbers stay stable. Combined with safe-by-default, the pipeline for untrusted model output is:
+
+```bash
+llm | marcus --fix-llm > clean.html     # safe + repaired, every change logged
+```
 
 Library API:
 
@@ -141,7 +159,7 @@ const { html, issues, headings, words } = parseMarkdownDetail(source);
 ## Development
 
 ```bash
-npm test        # builds, then runs the node:test suite (73 tests)
+npm test        # builds, then runs the node:test suite (101 tests)
 npm run build   # tsc → dist/
 npm start -- file.md
 ```

@@ -89,6 +89,73 @@ function countWords(text) {
 export function parseMarkdown(source, options) {
     return parseMarkdownDetail(source, options).html;
 }
+/**
+ * Repair common LLM-output artifacts in place (mutates `lines`), logging every
+ * change via `addRepair` (0-based line index). Runs only when `fixLlm` is on.
+ * Repairs are deliberately conservative:
+ *  - heading space: `##Title` → `## Title` (hashes followed by non-space)
+ *  - fence-wrapped frontmatter: a first-line fence whose body is a `---`
+ *    frontmatter block is unwrapped (fence lines blanked, line numbers stable)
+ *  - ` proved`-style artifacts: only when the line consists solely of the
+ *    artifact, so prose like "the experiment proved X" is never touched
+ * Fence bodies are never modified.
+ */
+function repairLlmArtifacts(lines, addRepair) {
+    // -- 1. fence-wrapped frontmatter at the very start of the document --------
+    const opener = /^ {0,3}(`{3,}|~{3,})\s*(.*)$/.exec(lines[0] ?? "");
+    if (opener !== null) {
+        const char = opener[1][0];
+        const length = opener[1].length;
+        const closeRe = new RegExp(`^ {0,3}${char}{${length},}\\s*$`);
+        let closeIdx = -1;
+        for (let j = 1; j < lines.length; j++) {
+            if (closeRe.test(lines[j])) {
+                closeIdx = j;
+                break;
+            }
+        }
+        if (closeIdx > 1) {
+            const body = lines.slice(1, closeIdx);
+            const firstContent = body.findIndex((entry) => entry.trim() !== "");
+            if (firstContent !== -1 &&
+                body[firstContent].trim() === "---" &&
+                body.slice(firstContent + 1).some((entry) => entry.trim() === "---")) {
+                lines[0] = "";
+                lines[closeIdx] = "";
+                addRepair(0, "repaired-frontmatter-fence", "frontmatter was wrapped in a code fence — unwrapped it (fence lines blanked)");
+            }
+        }
+    }
+    // -- 2. per-line artifacts (fence-aware) ------------------------------------
+    let fence = null;
+    for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        if (fence !== null) {
+            const closeRe = new RegExp(`^ {0,3}${fence.char}{${fence.length},}\\s*$`);
+            if (closeRe.test(line))
+                fence = null;
+            continue;
+        }
+        const openMatch = /^ {0,3}(`{3,}|~{3,})/.exec(line);
+        if (openMatch !== null) {
+            fence = { char: openMatch[1][0], length: openMatch[1].length };
+            continue;
+        }
+        const heading = /^( {0,3}#{1,6})([^#\s].*)$/.exec(line);
+        if (heading !== null) {
+            lines[i] = `${heading[1]} ${heading[2]}`;
+            addRepair(i, "repaired-heading-space", "heading hashes had no space before the title — inserted one");
+            continue;
+        }
+        // ` proved`-style artifacts: a line consisting solely of (whitespace +
+        //) "proved" — the stray code-fence token LLMs emit. Whole-line matches
+        // only, so prose like "the experiment proved X" is never touched.
+        if (/^\s+proved\s*$/i.test(line)) {
+            lines[i] = " proved";
+            addRepair(i, "repaired-proved-block", "stray ' proved' artifact normalized to ' proved'");
+        }
+    }
+}
 /** Full entry point: HTML plus issues, heading map and word count. */
 export function parseMarkdownDetail(source, options) {
     const ctx = {
@@ -98,7 +165,14 @@ export function parseMarkdownDetail(source, options) {
         lineOffset: 0,
         safe: options?.unsafeHtml !== true,
     };
-    const html = parseBlocks(normalizeNewlines(source), ctx);
+    const lines = normalizeNewlines(source).split("\n");
+    if (options?.fixLlm === true) {
+        const pushRepair = (lineIndex, code, message) => {
+            ctx.issues.push({ line: lineIndex + 1, code, severity: "info", message });
+        };
+        repairLlmArtifacts(lines, pushRepair);
+    }
+    const html = parseBlocks(lines.join("\n"), ctx);
     return { html, issues: ctx.issues, headings: ctx.headings, words: ctx.words };
 }
 function parseBlocks(source, ctx) {
@@ -150,8 +224,13 @@ function parseBlocks(source, ctx) {
         fenceLang = "";
     };
     // -- frontmatter heuristic (top level only) ---------------------------------
-    if (ctx.lineOffset === 0 && lines[0] === "---" && lines.slice(1).includes("---")) {
-        addIssue(0, "frontmatter-unsupported", "info", "input starts with '---' — YAML frontmatter is not supported yet and renders as a thematic break");
+    if (ctx.lineOffset === 0) {
+        const firstContent = lines.findIndex((entry) => entry.trim() !== "");
+        if (firstContent !== -1 &&
+            lines[firstContent] === "---" &&
+            lines.slice(firstContent + 1).includes("---")) {
+            addIssue(firstContent, "frontmatter-unsupported", "info", "input starts with '---' — YAML frontmatter is not supported yet and renders as thematic breaks");
+        }
     }
     for (let i = 0; i < lines.length; i++) {
         const line = lines[i];

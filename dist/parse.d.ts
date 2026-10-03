@@ -16,7 +16,7 @@
  *   info    — deliberate repairs or unsupported-syntax notices; never blocks --strict
  */
 export type IssueSeverity = "warning" | "info";
-export type IssueCode = "unclosed-fence" | "unclosed-inline-code" | "unclosed-bold" | "unclosed-strikethrough" | "heading-skip" | "list-interrupted" | "mixed-list-markers" | "frontmatter-unsupported" | "html-escaped";
+export type IssueCode = "unclosed-fence" | "unclosed-inline-code" | "unclosed-bold" | "unclosed-strikethrough" | "heading-skip" | "list-interrupted" | "mixed-list-markers" | "frontmatter-unsupported" | "html-escaped" | "repaired-frontmatter-fence" | "repaired-heading-space" | "repaired-proved-block";
 export interface Issue {
     /** 1-based source line where the issue was detected. */
     line: number;
@@ -44,6 +44,12 @@ export interface ParseOptions {
      * Default: false — raw HTML is escaped to visible text (safe mode).
      */
     unsafeHtml?: boolean;
+    /**
+     * When true, common LLM-output artifacts are repaired before parsing and
+     * every repair is logged as an info issue with a `repaired-*` code
+     * (RESEARCH.md §2.3). Default: false — artifacts render as-is.
+     */
+    fixLlm?: boolean;
 }
 /** HTML-only entry point: diagnostics discarded. */
 export declare function parseMarkdown(source: string, options?: ParseOptions): string;

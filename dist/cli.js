@@ -34,6 +34,8 @@ Options:
   --report json    print a JSON report (html, issues, stats) instead of HTML
   -q, --quiet      don't mirror issues to stderr
   --unsafe         allow raw HTML through unescaped (for trusted input)
+  --fix-llm        repair common LLM-output artifacts before parsing;
+                   every repair is logged as an info issue
 
 Exit codes:
   0  success (or only info-level issues)
@@ -54,6 +56,8 @@ Issue codes:
   mixed-list-markers      list marker style switched mid-list
   frontmatter-unsupported '---' frontmatter detected; not supported yet
   html-escaped            raw HTML was escaped in safe mode (--unsafe keeps it)
+  repaired-*              LLM artifact fixed by --fix-llm (heading space,
+                          fence-wrapped frontmatter, proved blocks)
 `;
 /** Thrown by parseArgs for unrecognized options; maps to exit code 2. */
 class UsageError extends Error {
@@ -66,6 +70,7 @@ function parseArgs(argv) {
     let quiet = false;
     let report = null;
     let unsafeHtml = false;
+    let fixLlm = false;
     let onlyFiles = false;
     for (let i = 0; i < argv.length; i++) {
         const arg = argv[i];
@@ -84,6 +89,8 @@ function parseArgs(argv) {
                 quiet = true;
             else if (arg === "--unsafe")
                 unsafeHtml = true;
+            else if (arg === "--fix-llm")
+                fixLlm = true;
             else if (arg === "--report") {
                 const value = argv[i + 1];
                 if (value === undefined)
@@ -99,7 +106,7 @@ function parseArgs(argv) {
         }
         files.push(arg);
     }
-    return { files, help, version, strict, quiet, report, unsafeHtml };
+    return { files, help, version, strict, quiet, report, unsafeHtml, fixLlm };
 }
 /** Read all of stdin. Empty string if stdin is closed or empty. */
 async function readStdin() {
@@ -145,7 +152,7 @@ async function main() {
     for (const file of files) {
         try {
             const markdown = file === "-" ? await readStdin() : await readFile(file, "utf8");
-            const result = parseMarkdownDetail(markdown, { unsafeHtml: opts.unsafeHtml });
+            const result = parseMarkdownDetail(markdown, { unsafeHtml: opts.unsafeHtml, fixLlm: opts.fixLlm });
             for (const issue of result.issues) {
                 allIssues.push({ ...issue, file });
                 if (!opts.quiet) {
@@ -169,6 +176,7 @@ async function main() {
     }
     if (opts.report === "json") {
         const warnings = allIssues.filter((issue) => issue.severity === "warning").length;
+        const repairs = allIssues.filter((issue) => issue.code.startsWith("repaired-")).length;
         const infos = allIssues.length - warnings;
         const report = {
             tool: "marcus",
@@ -181,6 +189,7 @@ async function main() {
                 readingTimeMinutes: Math.max(1, Math.round(totalWords / 200)),
                 warnings,
                 infos,
+                repairs,
             },
         };
         process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);

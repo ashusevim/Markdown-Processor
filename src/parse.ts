@@ -1,13 +1,64 @@
 /**
- * marcus core parser — Markdown → HTML.
+ * marcus core parser — Markdown → HTML with diagnostics.
  *
  * Pure module: no I/O, no dependencies. The CLI (`cli.ts`) is a thin wrapper,
- * and library consumers can `import { parseMarkdown }` directly.
+ * and library consumers can import either entry point:
  *
- * Architecture note (RESEARCH.md): the line-based state machine below is the
- * carrier for phase 2 diagnostics (line numbers for warnings) and phase 3
- * safe-mode escaping — those phases extend this file, they don't rewrite it.
+ *   parseMarkdown(source)        → html string (backward compatible)
+ *   parseMarkdownDetail(source)  → { html, issues, headings, words }
+ *
+ * marcus's differentiator (RESEARCH.md): unlike every other converter, it
+ * tells you the truth about your input — render-affecting problems come back
+ * as line-numbered issues instead of silently wrong HTML.
+ *
+ * Issue severities:
+ *   warning — output probably doesn't match the author's intent; --strict fails on these
+ *   info    — deliberate repairs or unsupported-syntax notices; never blocks --strict
  */
+
+export type IssueSeverity = "warning" | "info";
+
+export type IssueCode =
+    | "unclosed-fence"
+    | "unclosed-inline-code"
+    | "unclosed-bold"
+    | "unclosed-strikethrough"
+    | "heading-skip"
+    | "list-interrupted"
+    | "mixed-list-markers"
+    | "frontmatter-unsupported";
+
+export interface Issue {
+    /** 1-based source line where the issue was detected. */
+    line: number;
+    code: IssueCode;
+    severity: IssueSeverity;
+    message: string;
+}
+
+export interface HeadingRef {
+    level: number;
+    /** Raw heading text (inline markers not stripped). */
+    text: string;
+    /** 1-based source line. */
+    line: number;
+}
+
+export interface ParseResult {
+    html: string;
+    issues: Issue[];
+    headings: HeadingRef[];
+    words: number;
+}
+
+/** Shared accumulation context threaded through (recursive) block parsing. */
+interface Ctx {
+    issues: Issue[];
+    headings: HeadingRef[];
+    words: number;
+    /** 0-based offset making nested (blockquote) line numbers absolute. */
+    lineOffset: number;
+}
 
 /** Normalize CRLF / lone CR to LF so regexes and line handling stay predictable. */
 function normalizeNewlines(input: string): string {
@@ -25,11 +76,6 @@ function escapeHtml(text: string): string {
 /** Escape a value destined for a double-quoted HTML attribute. */
 function escapeAttr(text: string): string {
     return escapeHtml(text).replace(/"/g, "&quot;");
-}
-
-interface FenceState {
-    char: string;
-    length: number;
 }
 
 /**
@@ -76,25 +122,58 @@ function inline(text: string): string {
     return t;
 }
 
-/**
- * Convert Markdown source to HTML.
- *
- * Block-level constructs (headings, fences, quotes, lists, paragraphs) are
- * detected line by line; inline formatting is applied per text run.
- * Returns a fragment — no <html>/<body> wrapper, ready to embed or pipe.
- */
+/** Rough prose word count used for stats; markdown markers don't count as letters. */
+function countWords(text: string): number {
+    return text.replace(/[`*_~]/g, " ").split(/\s+/).filter(Boolean).length;
+}
+
+/** Backward-compatible entry point: HTML only, diagnostics discarded. */
 export function parseMarkdown(source: string): string {
-    const lines = normalizeNewlines(source).split("\n");
+    return parseMarkdownDetail(source).html;
+}
+
+/** Full entry point: HTML plus issues, heading map and word count. */
+export function parseMarkdownDetail(source: string): ParseResult {
+    const ctx: Ctx = { issues: [], headings: [], words: 0, lineOffset: 0 };
+    const html = parseBlocks(normalizeNewlines(source), ctx);
+    return { html, issues: ctx.issues, headings: ctx.headings, words: ctx.words };
+}
+
+function parseBlocks(source: string, ctx: Ctx): string {
+    const lines = source.split("\n");
     const out: string[] = [];
 
     let paragraph: string[] = [];
+    let paragraphStart = 0; // index of the first line of the current paragraph
     let listType: "ul" | "ol" | null = null;
-    let fence: FenceState | null = null;
+    let fence: { char: string; length: number; startLine: number } | null = null;
     let fenceLang = "";
     let fenceBody: string[] = [];
+    let prevHeadingLevel = 0;
+
+    const addIssue = (lineIndex: number, code: IssueCode, severity: IssueSeverity, message: string): void => {
+        ctx.issues.push({ line: ctx.lineOffset + lineIndex + 1, code, severity, message });
+    };
+
+    /**
+     * Render-affecting inline heuristics, checked per text run (paragraph-level
+     * so emphasis pairs may legally span lines; single-line for headings/items).
+     */
+    const inlineChecks = (text: string, lineIndex: number): void => {
+        if (text.replace(/`[^`\n]*`/g, "").includes("`")) {
+            addIssue(lineIndex, "unclosed-inline-code", "warning", "unpaired backtick — inline code span may be unclosed");
+        }
+        if (((text.match(/\*\*/g) ?? []).length) % 2 === 1) {
+            addIssue(lineIndex, "unclosed-bold", "warning", "odd number of '**' — bold segment may be unclosed");
+        }
+        if (((text.match(/~~/g) ?? []).length) % 2 === 1) {
+            addIssue(lineIndex, "unclosed-strikethrough", "warning", "odd number of '~~' — strikethrough may be unclosed");
+        }
+    };
 
     const flushParagraph = (): void => {
         if (paragraph.length === 0) return;
+        inlineChecks(paragraph.join("\n"), paragraphStart);
         out.push(`<p>${inline(paragraph.join("\n"))}</p>`);
         paragraph = [];
     };
@@ -106,13 +185,16 @@ export function parseMarkdown(source: string): string {
     };
     const emitFence = (): void => {
         const langClass = fenceLang !== "" ? ` class="language-${fenceLang}"` : "";
-        out.push(
-            `<pre><code${langClass}>${escapeHtml(fenceBody.join("\n"))}\n</code></pre>`,
-        );
+        out.push(`<pre><code${langClass}>${escapeHtml(fenceBody.join("\n"))}\n</code></pre>`);
         fence = null;
         fenceBody = [];
         fenceLang = "";
     };
+
+    // -- frontmatter heuristic (top level only) ---------------------------------
+    if (ctx.lineOffset === 0 && lines[0] === "---" && lines.slice(1).includes("---")) {
+        addIssue(0, "frontmatter-unsupported", "info", "input starts with '---' — YAML frontmatter is not supported yet and renders as a thematic break");
+    }
 
     for (let i = 0; i < lines.length; i++) {
         const line = lines[i]!;
@@ -132,7 +214,7 @@ export function parseMarkdown(source: string): string {
             const marker = openFence[1]!;
             flushParagraph();
             closeList();
-            fence = { char: marker[0]!, length: marker.length };
+            fence = { char: marker[0]!, length: marker.length, startLine: i };
             const info = openFence[2]!.trim().split(/\s+/)[0] ?? "";
             fenceLang = /^[A-Za-z0-9_-]+$/.test(info) ? info : "";
             continue;
@@ -158,7 +240,14 @@ export function parseMarkdown(source: string): string {
             flushParagraph();
             closeList();
             const level = heading[1]!.length;
-            out.push(`<h${level}>${inline(heading[2]!)}</h${level}>`);
+            const text = heading[2]!;
+            if (prevHeadingLevel > 0 && level > prevHeadingLevel + 1) {
+                addIssue(i, "heading-skip", "warning", `heading level jumps from h${prevHeadingLevel} to h${level} — breaks document outline`);
+            }
+            prevHeadingLevel = level;
+            ctx.headings.push({ level, text, line: ctx.lineOffset + i + 1 });
+            ctx.words += countWords(text);
+            out.push(`<h${level}>${inline(text)}</h${level}>`);
             continue;
         }
 
@@ -167,13 +256,19 @@ export function parseMarkdown(source: string): string {
             flushParagraph();
             closeList();
             const quoteLines: string[] = [];
+            const quoteStart = i;
             while (i < lines.length && /^ {0,3}>/.test(lines[i]!)) {
                 quoteLines.push(lines[i]!.replace(/^ {0,3}> ?/, ""));
                 i++;
             }
             i--; // compensate for the for-loop increment
-            const inner = parseMarkdown(quoteLines.join("\n")).trim();
-            out.push(inner === "" ? "<blockquote></blockquote>" : `<blockquote>\n${inner}\n</blockquote>`);
+            const rendered = parseBlocks(quoteLines.join("\n"), {
+                issues: ctx.issues,
+                headings: ctx.headings,
+                words: ctx.words,
+                lineOffset: ctx.lineOffset + quoteStart,
+            });
+            out.push(rendered === "" ? "<blockquote></blockquote>" : `<blockquote>\n${rendered}\n</blockquote>`);
             continue;
         }
 
@@ -184,11 +279,17 @@ export function parseMarkdown(source: string): string {
             flushParagraph();
             const type: "ul" | "ol" = ulItem !== null ? "ul" : "ol";
             if (listType !== type) {
+                if (listType !== null) {
+                    addIssue(i, "mixed-list-markers", "info", "list marker style changed — the previous list was implicitly closed here");
+                }
                 closeList();
                 out.push(`<${type}>`);
                 listType = type;
             }
-            out.push(`<li>${inline((ulItem ?? olItem)![1]!)}</li>`);
+            const text = (ulItem ?? olItem)![1]!;
+            inlineChecks(text, i);
+            ctx.words += countWords(text);
+            out.push(`<li>${inline(text)}</li>`);
             continue;
         }
 
@@ -201,12 +302,20 @@ export function parseMarkdown(source: string): string {
         }
 
         // -- paragraph text; interrupts an open list ------------------------------
-        if (listType !== null) closeList();
+        if (listType !== null) {
+            addIssue(i, "list-interrupted", "info", "non-list line implicitly closes the open list here");
+            closeList();
+        }
+        if (paragraph.length === 0) paragraphStart = i;
         paragraph.push(line);
+        ctx.words += countWords(line);
     }
 
     // -- end of input ------------------------------------------------------------
-    if (fence !== null) emitFence(); // unclosed fence: repair by closing implicitly
+    if (fence !== null) {
+        addIssue(fence.startLine, "unclosed-fence", "warning", "code fence opened here is never closed — everything after it renders as code");
+        emitFence();
+    }
     flushParagraph();
     closeList();
 

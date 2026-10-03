@@ -1,16 +1,16 @@
 #!/usr/bin/env node
 /**
- * marcus — markdown → HTML CLI.
+ * marcus — markdown → HTML CLI with diagnostics.
  *
  * Thin wrapper around src/parse.ts: argument parsing, stdin support and exit
  * codes live here; all conversion logic lives in the pure parser module.
  * Zero runtime dependencies by design (see RESEARCH.md §6).
  */
 import { readFile } from "node:fs/promises";
-import { parseMarkdown } from "./parse.js";
+import { parseMarkdownDetail, type HeadingRef, type Issue } from "./parse.js";
 import { VERSION } from "./version.js";
 
-const HELP = `marcus ${VERSION} — markdown → HTML converter
+const HELP = `marcus ${VERSION} — markdown → HTML converter with diagnostics
 
 Usage: marcus [options] [file ...]
 
@@ -20,15 +20,35 @@ an explicit "-"), Markdown is read from stdin — handy in pipes:
     cat notes.md | marcus
     marcus README.md > README.html
 
+Unlike other converters, marcus reports render-affecting problems on stderr
+with line numbers instead of producing silently wrong HTML.
+
 Options:
-  -h, --help      show this help and exit
-  -V, --version   print version and exit
-  -               read from stdin (implicit when no file is given)
+  -h, --help       show this help and exit
+  -V, --version    print version and exit
+  -                read from stdin (implicit when no file is given)
+  --strict         exit 1 if any warning-level issue is found (CI gate)
+  --report json    print a JSON report (html, issues, stats) instead of HTML
+  -q, --quiet      don't mirror issues to stderr
 
 Exit codes:
-  0  success
-  1  a file could not be read (reported on stderr; remaining files still convert)
+  0  success (or only info-level issues)
+  1  a file could not be read, or --strict found warnings
   2  usage error
+
+Issue severities:
+  warning  output probably doesn't match author intent (--strict fails on these)
+  info     deliberate repairs or unsupported-syntax notices (never fails --strict)
+
+Issue codes:
+  unclosed-fence          code fence never closed; rest of file renders as code
+  unclosed-inline-code    unpaired backtick on a line
+  unclosed-bold           odd number of '**' in a text run
+  unclosed-strikethrough  odd number of '~~' in a text run
+  heading-skip            heading level jumps (h2 -> h4), breaking the outline
+  list-interrupted        non-list line implicitly closed an open list
+  mixed-list-markers      list marker style switched mid-list
+  frontmatter-unsupported '---' frontmatter detected; not supported yet
 `;
 
 /** Thrown by parseArgs for unrecognized options; maps to exit code 2. */
@@ -38,15 +58,22 @@ interface Options {
     files: string[];
     help: boolean;
     version: boolean;
+    strict: boolean;
+    quiet: boolean;
+    report: "json" | null;
 }
 
 function parseArgs(argv: readonly string[]): Options {
     const files: string[] = [];
     let help = false;
     let version = false;
+    let strict = false;
+    let quiet = false;
+    let report: "json" | null = null;
     let onlyFiles = false;
 
-    for (const arg of argv) {
+    for (let i = 0; i < argv.length; i++) {
+        const arg = argv[i]!;
         if (!onlyFiles && arg === "--") {
             onlyFiles = true;
             continue;
@@ -54,12 +81,20 @@ function parseArgs(argv: readonly string[]): Options {
         if (!onlyFiles && arg.startsWith("-") && arg !== "-") {
             if (arg === "-h" || arg === "--help") help = true;
             else if (arg === "-V" || arg === "--version") version = true;
-            else throw new UsageError(`unknown option: ${arg}`);
+            else if (arg === "--strict") strict = true;
+            else if (arg === "-q" || arg === "--quiet") quiet = true;
+            else if (arg === "--report") {
+                const value = argv[i + 1];
+                if (value === undefined) throw new UsageError("--report requires a format (supported: json)");
+                if (value !== "json") throw new UsageError(`unknown report format: ${value} (supported: json)`);
+                report = "json";
+                i++; // consume the format value
+            } else throw new UsageError(`unknown option: ${arg}`);
             continue;
         }
         files.push(arg);
     }
-    return { files, help, version };
+    return { files, help, version, strict, quiet, report };
 }
 
 /** Read all of stdin. Empty string if stdin is closed or empty. */
@@ -69,6 +104,13 @@ async function readStdin(): Promise<string> {
         chunks.push(chunk as Buffer);
     }
     return Buffer.concat(chunks).toString("utf8");
+}
+
+interface FileReport {
+    file: string;
+    html: string;
+    words: number;
+    headings: HeadingRef[];
 }
 
 async function main(): Promise<void> {
@@ -104,11 +146,30 @@ async function main(): Promise<void> {
 
     let hadError = false;
     let wroteAny = false;
+    const fileReports: FileReport[] = [];
+    const allIssues: (Issue & { file: string })[] = [];
+    let totalWords = 0;
+
     for (const file of files) {
         try {
             const markdown = file === "-" ? await readStdin() : await readFile(file, "utf8");
+            const result = parseMarkdownDetail(markdown);
+
+            for (const issue of result.issues) {
+                allIssues.push({ ...issue, file });
+                if (!opts.quiet) {
+                    process.stderr.write(
+                        `marcus: ${file}:${issue.line}: ${issue.severity} [${issue.code}]: ${issue.message}\n`,
+                    );
+                }
+            }
+            totalWords += result.words;
+            fileReports.push({ file, html: result.html, words: result.words, headings: result.headings });
+
+            if (opts.report === "json") continue;
+
             if (wroteAny) process.stdout.write("\n");
-            process.stdout.write(parseMarkdown(markdown));
+            process.stdout.write(result.html);
             wroteAny = true;
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
@@ -116,7 +177,28 @@ async function main(): Promise<void> {
             hadError = true;
         }
     }
-    process.exitCode = hadError ? 1 : 0;
+
+    if (opts.report === "json") {
+        const warnings = allIssues.filter((issue) => issue.severity === "warning").length;
+        const infos = allIssues.length - warnings;
+        const report = {
+            tool: "marcus",
+            version: VERSION,
+            files: fileReports,
+            issues: allIssues,
+            stats: {
+                files: fileReports.length,
+                words: totalWords,
+                readingTimeMinutes: Math.max(1, Math.round(totalWords / 200)),
+                warnings,
+                infos,
+            },
+        };
+        process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
+    }
+
+    const warnings = allIssues.filter((issue) => issue.severity === "warning").length;
+    process.exitCode = hadError || (opts.strict && warnings > 0) ? 1 : 0;
 }
 
 await main();

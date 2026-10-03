@@ -8,9 +8,10 @@ Converts Markdown to clean, semantic HTML fragments on stdout — built for pipe
 
 - **Zero runtime dependencies** — the whole tool is a few hundred lines you can audit in one sitting.
 - **Pipeline-first** — stdin in, HTML out, exit codes that mean something.
+- **Tells you the truth** — render-affecting problems come back as line-numbered warnings (`--strict`, `--report json`), not silently wrong HTML.
 - **Library and CLI in one** — the CLI is a thin wrapper around a pure parser module.
 
-> Roadmap: marcus is becoming the *trust-boundary* markdown CLI — see [RESEARCH.md](RESEARCH.md) for the full product research: phase 2 adds conversion diagnostics (`--strict`, `--report json`), phase 3 safe-by-default HTML escaping, phase 4 an LLM-output repair pack.
+> Roadmap: marcus is becoming the *trust-boundary* markdown CLI — see [RESEARCH.md](RESEARCH.md). ✅ Phase 1 correctness rework · ✅ Phase 2 diagnostics engine · next: phase 3 safe-by-default HTML escaping, phase 4 LLM-output repair pack.
 
 ## Install
 
@@ -49,13 +50,16 @@ parseMarkdown("# hi\n\n**bold** and [a link](https://ex.com)");
 | `-V`, `--version` | print version and exit |
 | `-` | read from stdin (implicit when no file is given) |
 | `--` | treat all following arguments as file names |
+| `--strict` | exit 1 if any warning-level issue is found (CI gate) |
+| `--report json` | print a JSON report (html, issues, stats) instead of HTML |
+| `-q`, `--quiet` | don't mirror issues to stderr |
 
 ## Exit codes
 
 | Code | Meaning |
 |---|---|
-| `0` | success |
-| `1` | a file could not be read (reported on stderr; remaining files still convert) |
+| `0` | success (or only info-level issues) |
+| `1` | a file could not be read, or `--strict` found warnings |
 | `2` | usage error (unknown option, no input and stdin is a terminal) |
 
 ## Supported syntax
@@ -74,10 +78,67 @@ parseMarkdown("# hi\n\n**bold** and [a link](https://ex.com)");
 - Paragraphs: consecutive text lines are wrapped in `<p>`; blank lines separate them
 - Raw HTML passthrough: lines starting with a tag are emitted verbatim
 
+## Diagnostics (the marcus difference)
+
+Converters usually fail silently: broken input goes in, quietly-wrong HTML comes out. marcus reports render-affecting problems with line numbers instead.
+
+```text
+$ marcus doc.md
+marcus: doc.md:5: warning [unclosed-fence]: code fence opened here is never closed — everything after it renders as code
+```
+
+| Severity | Meaning |
+|---|---|
+| `warning` | output probably doesn't match author intent — `--strict` fails on these |
+| `info` | deliberate repairs or unsupported-syntax notices — never fails `--strict` |
+
+| Code | Problem |
+|---|---|
+| `unclosed-fence` | code fence never closed; the rest of the file renders as code |
+| `unclosed-inline-code` | unpaired backtick on a line |
+| `unclosed-bold` | odd number of `**` in a text run |
+| `unclosed-strikethrough` | odd number of `~~` in a text run |
+| `heading-skip` | heading level jumps (e.g. `h1` → `h4`), breaking the document outline |
+| `list-interrupted` | a non-list line implicitly closed an open list |
+| `mixed-list-markers` | list marker style switched mid-list |
+| `frontmatter-unsupported` | `---` frontmatter detected; not supported yet (renders as `<hr>`) |
+
+### CI gate
+
+```bash
+marcus --strict docs/*.md || echo "docs have render problems"
+```
+
+### Machine-readable report
+
+```bash
+marcus --report json doc.md
+```
+
+```json
+{
+  "tool": "marcus",
+  "version": "1.2.0",
+  "files": [{ "file": "doc.md", "html": "…", "words": 5, "headings": [] }],
+  "issues": [{ "file": "doc.md", "line": 5, "code": "unclosed-fence", "severity": "warning", "message": "…" }],
+  "stats": { "files": 1, "words": 5, "readingTimeMinutes": 1, "warnings": 1, "infos": 0 }
+}
+```
+
+Reports are deterministic — same input produces byte-identical output (no timestamps), safe to cache and diff.
+
+Library API:
+
+```js
+import { parseMarkdownDetail } from "markdown-processor";
+
+const { html, issues, headings, words } = parseMarkdownDetail(source);
+```
+
 ## Development
 
 ```bash
-npm test        # builds, then runs the node:test suite (44 tests)
+npm test        # builds, then runs the node:test suite (73 tests)
 npm run build   # tsc → dist/
 npm start -- file.md
 ```
@@ -85,16 +146,16 @@ npm start -- file.md
 Layout:
 
 ```
-src/parse.ts     pure parser (no I/O, no deps) — this is the library
-src/cli.ts       thin CLI wrapper: args, stdin, exit codes
+src/parse.ts     pure parser + diagnostics (no I/O, no deps) — this is the library
+src/cli.ts       thin CLI wrapper: args, stdin, exit codes, report
 src/version.ts   version constant (keep in sync with package.json)
 test/*.test.ts   node:test suite (runs TS directly via Node type stripping)
 ```
 
 ## Limitations (known, deliberate)
 
-- No nested lists, tables, task lists or footnotes yet — planned alongside the phase 2/3 work.
-- Frontmatter (`---` at the top) currently renders as a thematic break.
+- No nested lists, tables, task lists or footnotes yet — planned alongside the phase 3/4 work.
+- Frontmatter (`---` at the top) currently renders as a thematic break (reported as info).
 - Raw HTML is passed through unescaped by design for now — safe-by-default escaping lands in phase 3.
 - A blank line inside a list keeps the list open but does not create loose (`<p>`-in-`<li>`) items.
 

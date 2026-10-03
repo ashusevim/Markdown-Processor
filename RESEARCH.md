@@ -53,6 +53,7 @@ Auto-close unclosed fences · unwrap ` ``` ` wrapped frontmatter · repair merge
 ## 4. Shipping order
 
 1. **Correctness first** ✅ *done 2026-10-03*: zero-dep restructure (`src/parse.ts` pure library + thin `src/cli.ts`, commander removed, ESM, engines >=20), links + link titles, italics, bold-italic, code fences with escaping, multi-line blockquotes (recursive), correct paragraph wrapping, list-close bug fixed, stdin support, real exit codes (0/1/2), 44-test `node:test` suite. Remaining GFM (tables, nested lists, task lists) moves to phase 2/3 work.
+2. **Diagnostics engine** ✅ *done 2026-10-03*: `parseMarkdownDetail()` returns `{ html, issues, headings, words }`; 8 issue codes with line numbers (unclosed fences/inline-code/bold/strikethrough, heading-skip, list-interrupted, mixed-list-markers, frontmatter-unsupported); severities `warning`/`info`; `--strict` CI gate (exit 1 on warnings, infos never block), `--report json` deterministic machine-readable report (html + issues + TOC + stats/reading time), `--quiet`; blockquote recursion carries absolute line offsets; v1.2.0, 73 tests.
 2. **Diagnostics engine** + `--strict` + `--report` (the differentiator — build this before anything else unique).
 3. **Safe-by-default** + fragment/document modes + clean output.
 4. **`--fix-llm` repair pack** (ride the AI-output wave; write blog post + benchmarks against the arXiv taxonomy).

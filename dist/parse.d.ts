@@ -7,9 +7,9 @@
  *   parseMarkdown(source)        → html string (backward compatible)
  *   parseMarkdownDetail(source)  → { html, issues, headings, words }
  *
- * marcus's differentiator (RESEARCH.md): unlike every other converter, it
- * tells you the truth about your input — render-affecting problems come back
- * as line-numbered issues instead of silently wrong HTML.
+ * marcus's differentiator: unlike every other converter, it tells you the truth
+ * about your input — render-affecting problems come back as line-numbered
+ * issues instead of silently wrong HTML.
  *
  * Issue severities:
  *   warning — output probably doesn't match the author's intent; --strict fails on these
@@ -46,8 +46,8 @@ export interface ParseOptions {
     unsafeHtml?: boolean;
     /**
      * When true, common LLM-output artifacts are repaired before parsing and
-     * every repair is logged as an info issue with a `repaired-*` code
-     * (RESEARCH.md §2.3). Default: false — artifacts render as-is.
+     * every repair is logged as an info issue with a `repaired-*` code.
+     * Default: false — artifacts render as-is.
      */
     fixLlm?: boolean;
 }

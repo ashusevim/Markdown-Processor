@@ -3,7 +3,7 @@
   "publishConfig": {
     "access": "public"
   },
-  "version": "2.2.0",
+  "version": "2.3.0",
   "description": "marcus — a zero-dependency Markdown to HTML CLI and library that verifies its own output: safe-by-default escaping, line-numbered diagnostics for CI, and LLM-artifact repair",
   "type": "module",
   "sideEffects": false,

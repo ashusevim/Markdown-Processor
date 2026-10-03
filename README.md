@@ -68,7 +68,7 @@ Reports are deterministic — identical input produces byte-identical output (no
 
 ```json
 {
-  "tool": "marcus", "version": "2.2.0",
+  "tool": "marcus", "version": "2.3.0",
   "files": [{ "file": "doc.md", "html": "…", "words": 5, "headings": [] }],
   "issues": [{ "file": "doc.md", "line": 5, "code": "unclosed-fence", "severity": "warning", "message": "…" }],
   "stats": { "files": 1, "words": 5, "readingTimeMinutes": 1, "warnings": 1, "infos": 0, "repairs": 0 }
@@ -86,19 +86,20 @@ const { html, issues, headings, words } = parseMarkdownDetail(source, { fixLlm: 
 
 ## Syntax
 
-CommonMark-style blocks and GFM extensions: ATX headings, thematic breaks, blockquotes (parsed recursively), ordered/unordered lists, task lists (`- [x]`), GFM pipe tables with `:---`/`:-:`/`---:` alignment, fenced code with language classes, and inline code (including multi-backtick spans), bold/italic/strikethrough, links, angle autolinks and images. A leading BOM and CRLF/CR line endings are normalized.
+CommonMark-style blocks and GFM extensions: ATX headings, thematic breaks, blockquotes (parsed recursively), ordered/unordered lists nested to any depth, task lists (`- [x]`), GFM pipe tables with `:---`/`:-:`/`---:` alignment, fenced code with language classes, and inline code (including multi-backtick spans), bold/italic/strikethrough, links, angle autolinks and images. A leading BOM and CRLF/CR line endings are normalized.
 
 ## Limitations
 
-- No nested lists, footnotes or setext headings yet — nested input still renders, items just don't nest.
+- No footnotes or setext headings yet.
 - Frontmatter is not parsed; it renders as a thematic break and is reported as `info`.
 - Safe mode is *escape-all*, not an allowlist sanitizer. Pipe `--unsafe` output through a dedicated sanitizer if you need fine-grained control.
 - Task-list checkboxes are inert (`disabled`) by design.
+- Lists render tight: a blank line between items doesn't force `<p>` wrappers, and a blank line inside an item only wraps the paragraphs that follow it.
 
 ## Development
 
 ```bash
-npm test        # builds, then runs the node:test suite (149 tests)
+npm test        # builds, then runs the node:test suite (165 tests)
 npm run build   # tsc → dist/
 ```
 

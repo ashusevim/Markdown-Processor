@@ -4,7 +4,7 @@
  *
  * Thin wrapper around src/parse.ts: argument parsing, stdin support and exit
  * codes live here; all conversion logic lives in the pure parser module.
- * Zero runtime dependencies by design (see RESEARCH.md §6).
+ * Zero runtime dependencies by design.
  */
 import { readFile } from "node:fs/promises";
 import { parseMarkdownDetail, type HeadingRef, type Issue } from "./parse.js";

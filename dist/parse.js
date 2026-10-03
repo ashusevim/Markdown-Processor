@@ -7,9 +7,9 @@
  *   parseMarkdown(source)        → html string (backward compatible)
  *   parseMarkdownDetail(source)  → { html, issues, headings, words }
  *
- * marcus's differentiator (RESEARCH.md): unlike every other converter, it
- * tells you the truth about your input — render-affecting problems come back
- * as line-numbered issues instead of silently wrong HTML.
+ * marcus's differentiator: unlike every other converter, it tells you the truth
+ * about your input — render-affecting problems come back as line-numbered
+ * issues instead of silently wrong HTML.
  *
  * Issue severities:
  *   warning — output probably doesn't match the author's intent; --strict fails on these
@@ -252,7 +252,7 @@ export function parseMarkdownDetail(source, options) {
     const ctx = {
         issues: [],
         headings: [],
-        words: 0,
+        stats: { words: 0 },
         lineOffset: 0,
         safe: options?.unsafeHtml !== true,
     };
@@ -268,13 +268,16 @@ export function parseMarkdownDetail(source, options) {
     // (reported at the paragraph's first line) would otherwise interleave.
     // Array.prototype.sort is stable, so same-line issues keep insertion order.
     ctx.issues.sort((a, b) => a.line - b.line);
-    return { html, issues: ctx.issues, headings: ctx.headings, words: ctx.words };
+    return { html, issues: ctx.issues, headings: ctx.headings, words: ctx.stats.words };
 }
-function parseBlocks(source, ctx) {
+function parseBlocks(source, ctx, opts) {
     const lines = source.split("\n");
     const out = [];
     let paragraph = [];
     let paragraphStart = 0; // index of the first line of the current paragraph
+    // A "tight" call is a list item: its first paragraph is the item's own text
+    // and is rendered without <p> (CommonMark tight-list output).
+    let tightLead = opts?.tight === true;
     let listType = null;
     let listOpenIndex = null; // index of the open <ul>/<ol> in `out`
     let listHasTaskClass = false;
@@ -307,8 +310,11 @@ function parseBlocks(source, ctx) {
     const flushParagraph = () => {
         if (paragraph.length === 0)
             return;
-        inlineChecks(paragraph.join("\n"), paragraphStart);
-        out.push(`<p>${inline(paragraph.join("\n"), ctx.safe)}</p>`);
+        const text = paragraph.join("\n");
+        inlineChecks(text, paragraphStart);
+        ctx.stats.words += countWords(text);
+        out.push(tightLead ? inline(text, ctx.safe) : `<p>${inline(text, ctx.safe)}</p>`);
+        tightLead = false;
         paragraph = [];
     };
     const closeList = () => {
@@ -382,7 +388,7 @@ function parseBlocks(source, ctx) {
             }
             prevHeadingLevel = level;
             ctx.headings.push({ level, text, line: ctx.lineOffset + i + 1 });
-            ctx.words += countWords(text);
+            ctx.stats.words += countWords(text);
             out.push(`<h${level}>${inline(text, ctx.safe)}</h${level}>`);
             continue;
         }
@@ -400,19 +406,21 @@ function parseBlocks(source, ctx) {
             const rendered = parseBlocks(quoteLines.join("\n"), {
                 issues: ctx.issues,
                 headings: ctx.headings,
-                words: ctx.words,
+                stats: ctx.stats,
                 lineOffset: ctx.lineOffset + quoteStart,
                 safe: ctx.safe,
             });
             out.push(rendered === "" ? "<blockquote></blockquote>" : `<blockquote>\n${rendered}\n</blockquote>`);
             continue;
         }
-        // -- list items (GFM task-list markers supported) ------------------------
-        const ulItem = /^ {0,3}[*+-][ \t]+(.*)$/.exec(line);
-        const olItem = /^ {0,3}\d{1,9}[.)][ \t]+(.*)$/.exec(line);
-        if (ulItem !== null || olItem !== null) {
+        // -- list items ----------------------------------------------------------
+        // An item owns every following line indented to its content column, so
+        // nested lists (and indented fences/quotes/tables) fall out of recursion
+        // instead of needing a separate nesting model.
+        const listItem = /^( {0,3})(\d{1,9}[.)]|[*+-])[ \t]+(.*)$/.exec(line);
+        if (listItem !== null) {
             flushParagraph();
-            const type = ulItem !== null ? "ul" : "ol";
+            const type = /^\d/.test(listItem[2]) ? "ol" : "ul";
             if (listType !== type) {
                 if (listType !== null) {
                     addIssue(i, "mixed-list-markers", "info", "list marker style changed — the previous list was implicitly closed here");
@@ -423,24 +431,53 @@ function parseBlocks(source, ctx) {
                 listOpenIndex = out.length - 1;
                 listHasTaskClass = false;
             }
-            const text = (ulItem ?? olItem)[1];
-            const task = /^\[([ xX])\](?:[ \t]+(.*))?$/.exec(text);
+            const itemLine = i;
+            const contentIndent = listItem[1].length + listItem[2].length + 1;
+            const itemLines = [listItem[3]];
+            let j = i + 1;
+            while (j < lines.length) {
+                const candidate = lines[j];
+                if (candidate.trim() === "") {
+                    itemLines.push("");
+                    j++;
+                    continue;
+                }
+                const indent = /^ */.exec(candidate)[0].length;
+                if (indent < contentIndent)
+                    break;
+                itemLines.push(candidate.slice(Math.min(contentIndent, candidate.length)));
+                j++;
+            }
+            while (itemLines.length > 1 && itemLines[itemLines.length - 1] === "")
+                itemLines.pop();
+            i = j - 1; // the for-loop increment moves to the first unconsumed line
+            // GFM task-list marker lives on the item's first line.
+            const task = /^\[([ xX])\](?:[ \t]+(.*))?$/.exec(itemLines[0]);
+            let box = "";
             if (task !== null) {
-                const checked = task[1] !== " ";
-                const label = task[2] ?? "";
+                itemLines[0] = task[2] ?? "";
                 if (listOpenIndex !== null && !listHasTaskClass) {
                     out[listOpenIndex] = `<${type} class="contains-task-list">`;
                     listHasTaskClass = true;
                 }
-                inlineChecks(label, i);
-                ctx.words += countWords(label);
-                const box = `<input type="checkbox" class="task-list-item-checkbox"${checked ? " checked" : ""} disabled>`;
-                out.push(`<li class="task-list-item">${box}${label === "" ? "" : ` ${inline(label, ctx.safe)}`}</li>`);
-                continue;
+                box = `<input type="checkbox" class="task-list-item-checkbox"${task[1] !== " " ? " checked" : ""} disabled>`;
             }
-            inlineChecks(text, i);
-            ctx.words += countWords(text);
-            out.push(`<li>${inline(text, ctx.safe)}</li>`);
+            // Share the issues/headings/words accumulators with the recursion —
+            // `{ ...ctx }` would copy `words` by value and lose the count.
+            const rendered = parseBlocks(itemLines.join("\n"), {
+                issues: ctx.issues,
+                headings: ctx.headings,
+                stats: ctx.stats,
+                lineOffset: ctx.lineOffset + itemLine,
+                safe: ctx.safe,
+            }, { tight: true });
+            if (task === null) {
+                out.push(`<li>${rendered}</li>`);
+            }
+            else {
+                const body = itemLines[0] === "" ? "" : `${rendered === "" ? "" : " "}${rendered}`;
+                out.push(`<li class="task-list-item">${box}${body}</li>`);
+            }
             continue;
         }
         // -- GFM tables ----------------------------------------------------------
@@ -466,7 +503,7 @@ function parseBlocks(source, ctx) {
                 const renderRow = (cells, tag, lineIndex) => {
                     const rendered = cells.map((cell, idx) => {
                         inlineChecks(cell, lineIndex);
-                        ctx.words += countWords(cell);
+                        ctx.stats.words += countWords(cell);
                         return `<${tag}${alignStyle(aligns[idx] ?? null)}>${inline(cell, ctx.safe)}</${tag}>`;
                     });
                     return `<tr>\n${rendered.join("\n")}\n</tr>`;
@@ -510,7 +547,6 @@ function parseBlocks(source, ctx) {
         if (paragraph.length === 0)
             paragraphStart = i;
         paragraph.push(line);
-        ctx.words += countWords(line);
     }
     // -- end of input ------------------------------------------------------------
     if (fence !== null) {

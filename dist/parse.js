@@ -15,9 +15,13 @@
  *   warning — output probably doesn't match the author's intent; --strict fails on these
  *   info    — deliberate repairs or unsupported-syntax notices; never blocks --strict
  */
-/** Normalize CRLF / lone CR to LF so regexes and line handling stay predictable. */
+/**
+ * Normalize CRLF / lone CR to LF and drop a leading BOM (Windows editors and
+ * some export tools prepend one; left in place it breaks the first heading and
+ * leaks an invisible character into the output).
+ */
 function normalizeNewlines(input) {
-    return input.replace(/\r\n?/g, "\n");
+    return input.replace(/^\uFEFF/, "").replace(/\r\n?/g, "\n");
 }
 /** Escape a string for inclusion in HTML text content. */
 function escapeHtml(text) {
@@ -173,6 +177,10 @@ export function parseMarkdownDetail(source, options) {
         repairLlmArtifacts(lines, pushRepair);
     }
     const html = parseBlocks(lines.join("\n"), ctx);
+    // Document order: repairs (logged up front) and deferred paragraph checks
+    // (reported at the paragraph's first line) would otherwise interleave.
+    // Array.prototype.sort is stable, so same-line issues keep insertion order.
+    ctx.issues.sort((a, b) => a.line - b.line);
     return { html, issues: ctx.issues, headings: ctx.headings, words: ctx.words };
 }
 function parseBlocks(source, ctx) {

@@ -1,6 +1,6 @@
 {
   "name": "markdown-processor",
-  "version": "2.1.0",
+  "version": "2.1.1",
   "description": "marcus — a zero-dependency Markdown to HTML CLI and library",
   "type": "module",
   "engines": {

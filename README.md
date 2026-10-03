@@ -80,6 +80,7 @@ parseMarkdown("# hi\n\n**bold** and [a link](https://ex.com)");
 - Inline code: `` `code` `` (HTML inside is escaped)
 - Paragraphs: consecutive text lines are wrapped in `<p>`; blank lines separate them
 - Raw HTML: escaped to visible text by default (safe — script tags become inert text); `--unsafe` passes it through verbatim
+- Input robustness: a leading BOM is dropped, CRLF/CR line endings are normalized, unicode/emoji pass through untouched
 
 ## Diagnostics (the marcus difference)
 
@@ -159,7 +160,7 @@ const { html, issues, headings, words } = parseMarkdownDetail(source);
 ## Development
 
 ```bash
-npm test        # builds, then runs the node:test suite (101 tests)
+npm test        # builds, then runs the node:test suite (109 tests)
 npm run build   # tsc → dist/
 npm start -- file.md
 ```

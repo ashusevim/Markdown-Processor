@@ -88,7 +88,30 @@ Optional artifacts from the same core, only when demand appears:
 
 Revisit the stack ONLY if: (a) profiling shows Node startup dominates real CI usage at scale, or (b) a hard requirement for native single-binary distribution to non-developers emerges. Neither is true today.
 
-## 7. Sources
+## 7. End-to-end verification (2026-10-03)
+
+Ran the tool the way a real user would: `npm install` into an isolated prefix (symlinked package + `marcus` bin shim), then drove the installed binary, the CLI surface and the published entry points.
+
+| Scenario | Result |
+|---|---|
+| Install + bin shim, run from any cwd | ✅ `marcus 2.1.1`, shim → `dist/cli.js` |
+| Own README (22 fences, tables, quotes) | ✅ balanced HTML (2 h1, 20 h2, 22 pre, 200 code spans) |
+| Unicode/emoji/CJK, CRLF, lone CR, empty, whitespace-only, no trailing newline | ✅ all correct |
+| Error paths: directory, unreadable file, missing file | ✅ exit 1 + clean message |
+| 354 kB single line · 4.4 MB / 60k sections | ✅ balanced · 1.33 s |
+| CI gate (`--strict`) clean vs dirty doc | ✅ exit 0 / exit 1 |
+| stdin vs file input · run-to-run determinism | ✅ byte-identical |
+| Library consumer (`npm install ../..`, ESM import) | ✅ `parseMarkdown` / `parseMarkdownDetail` / `fixLlm` |
+| `npm pack --dry-run` | ✅ 10 files, 11.3 kB tarball, `dist/` + README only |
+
+**Bugs found and fixed by this pass (v2.1.1):**
+
+1. A leading BOM (U+FEFF) broke the first heading and leaked an invisible character into the HTML — now stripped in `normalizeNewlines`.
+2. Issues were returned in insertion order, so a deferred paragraph check (reported at the paragraph's first line) could appear after an issue on a later line — now sorted into document order (stable, same-line order preserved).
+
+**Deferred findings (real gaps, not bugs):** double-backtick inline code spans are unsupported, so markdown-about-markdown content (`` ``` `` inside a span) draws hedged parity warnings; pipe tables render literally — the strongest argument for the tables/GFM phase next.
+
+## 8. Sources
 
 - marked docs warning (no sanitize): https://github.com/markedjs/marked/blob/main/docs/INDEX.md
 - Showdown trusted-input model: https://github.com/showdownjs/showdown/blob/master/docs/xss.md

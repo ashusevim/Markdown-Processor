@@ -28,9 +28,11 @@ export type IssueCode =
     | "mixed-list-markers"
     | "frontmatter-unsupported"
     | "html-escaped"
+    | "table-ragged"
     | "repaired-frontmatter-fence"
     | "repaired-heading-space"
-    | "repaired-proved-block";
+    | "repaired-proved-block"
+    | "repaired-table-delimiter";
 
 export interface Issue {
     /** 1-based source line where the issue was detected. */
@@ -103,9 +105,13 @@ function escapeAttr(text: string): string {
  *  5. finally the protected runs are restored.
  */
 function inline(text: string, safe: boolean): string {
-    // 1. Protect code spans behind placeholders.
+    // 1. Protect code spans behind placeholders. CommonMark semantics: a span is
+    // delimited by a run of N backticks and closed by a run of exactly N, so its
+    // content may contain shorter (or longer) runs — ` ```yaml ` works.
     const codeSpans: string[] = [];
-    let t = text.replace(/`([^`\n]+)`/g, (_match: string, code: string) => {
+    let t = text.replace(/(?<!`)(`+)((?:[^`\n]|`+(?!\1))+?)\1(?!`)/g, (_match: string, _ticks: string, rawCode: string) => {
+        let code = rawCode.replace(/\n/g, " ");
+        if (code.length > 2 && code.startsWith(" ") && code.endsWith(" ")) code = code.slice(1, -1);
         codeSpans.push(`<code>${escapeHtml(code)}</code>`);
         return `\u0000${codeSpans.length - 1}\u0001`;
     });
@@ -180,6 +186,64 @@ export function parseMarkdown(source: string, options?: ParseOptions): string {
 }
 
 /**
+ * Split a GFM table row into trimmed cell texts, honoring `\|` escapes.
+ * Returns null when the line cannot be a table row: no pipe at all, or a line
+ * that a higher-priority block syntax owns (list item, heading, blockquote).
+ */
+function splitTableRow(line: string): string[] | null {
+    const trimmed = line.trim();
+    if (!trimmed.includes("|")) return null;
+    if (/^(?:[*+-]|\d{1,9}[.)])[ \t]/.test(trimmed)) return null; // list item wins
+    if (/^#{1,6}[ \t]/.test(trimmed)) return null; // heading wins
+    if (trimmed.startsWith(">")) return null; // blockquote wins
+    let body = trimmed;
+    if (body.startsWith("|")) body = body.slice(1);
+    if (body.endsWith("|") && !body.endsWith("\\|")) body = body.slice(0, -1);
+    const cells: string[] = [];
+    let current = "";
+    for (let k = 0; k < body.length; k++) {
+        const char = body[k]!;
+        if (char === "\\" && body[k + 1] === "|") {
+            current += "|";
+            k++;
+            continue;
+        }
+        if (char === "|") {
+            cells.push(current.trim());
+            current = "";
+            continue;
+        }
+        current += char;
+    }
+    cells.push(current.trim());
+    return cells;
+}
+
+/**
+ * Parse a GFM delimiter row (`| --- | :-: |`). Returns per-column alignment,
+ * or null when any cell isn't hyphens/colons. A pipe is required so that a bare
+ * `---` stays a thematic break instead of becoming a table delimiter.
+ */
+function parseDelimiterRow(line: string): ("left" | "center" | "right" | null)[] | null {
+    if (!line.includes("|")) return null;
+    const cells = splitTableRow(line);
+    if (cells === null || cells.length === 0) return null;
+    const aligns: ("left" | "center" | "right" | null)[] = [];
+    for (const cell of cells) {
+        if (!/^:?-+:?$/.test(cell)) return null;
+        const left = cell.startsWith(":");
+        const right = cell.endsWith(":");
+        aligns.push(left && right ? "center" : left ? "left" : right ? "right" : null);
+    }
+    return aligns;
+}
+
+/** `style` attribute for a column alignment, or "" for the default. */
+function alignStyle(align: "left" | "center" | "right" | null): string {
+    return align === null ? "" : ` style="text-align: ${align}"`;
+}
+
+/**
  * Repair common LLM-output artifacts in place (mutates `lines`), logging every
  * change via `addRepair` (0-based line index). Runs only when `fixLlm` is on.
  * Repairs are deliberately conservative:
@@ -188,6 +252,8 @@ export function parseMarkdown(source: string, options?: ParseOptions): string {
  *    frontmatter block is unwrapped (fence lines blanked, line numbers stable)
  *  - ` proved`-style artifacts: only when the line consists solely of the
  *    artifact, so prose like "the experiment proved X" is never touched
+ *  - table delimiter rows whose column count disagrees with the header row
+ *    (a very common LLM slip) are resized so the table renders as a table
  * Fence bodies are never modified.
  */
 function repairLlmArtifacts(
@@ -244,6 +310,24 @@ function repairLlmArtifacts(
             continue;
         }
 
+        // -- LLM artifact: table delimiter row with the wrong column count ---
+        const delimCells = splitTableRow(line);
+        if (
+            i > 0 &&
+            delimCells !== null &&
+            delimCells.length > 0 &&
+            delimCells.every((cell) => /^:?-+:?$/.test(cell))
+        ) {
+            const headerCells = splitTableRow(lines[i - 1]!);
+            if (headerCells !== null && headerCells.length !== delimCells.length) {
+                const fixed: string[] = [];
+                for (let c = 0; c < headerCells.length; c++) fixed.push(delimCells[c] ?? "---");
+                lines[i] = `| ${fixed.join(" | ")} |`;
+                addRepair(i, "repaired-table-delimiter", `table delimiter row had ${delimCells.length} column(s) but the header has ${headerCells.length} — resized so the table renders`);
+            }
+            continue;
+        }
+
         // ` proved`-style artifacts: a line consisting solely of (whitespace +
         //) "proved" — the stray code-fence token LLMs emit. Whole-line matches
         // only, so prose like "the experiment proved X" is never touched.
@@ -285,6 +369,8 @@ function parseBlocks(source: string, ctx: Ctx): string {
     let paragraph: string[] = [];
     let paragraphStart = 0; // index of the first line of the current paragraph
     let listType: "ul" | "ol" | null = null;
+    let listOpenIndex: number | null = null; // index of the open <ul>/<ol> in `out`
+    let listHasTaskClass = false;
     let fence: { char: string; length: number; startLine: number } | null = null;
     let fenceLang = "";
     let fenceBody: string[] = [];
@@ -299,13 +385,17 @@ function parseBlocks(source: string, ctx: Ctx): string {
      * so emphasis pairs may legally span lines; single-line for headings/items).
      */
     const inlineChecks = (text: string, lineIndex: number): void => {
-        if (text.replace(/`[^`\n]*`/g, "").includes("`")) {
+        // Inline-code content is literal: markers inside a span must not be
+        // counted, or documenting markdown ("use `**` for bold") warns falsely.
+        // Same backtick-run rule as inline(): N backticks close by N backticks.
+        const stripped = text.replace(/(?<!`)(`+)((?:[^`\n]|`+(?!\1))+?)\1(?!`)/g, "");
+        if (stripped.includes("`")) {
             addIssue(lineIndex, "unclosed-inline-code", "warning", "unpaired backtick — inline code span may be unclosed");
         }
-        if (((text.match(/\*\*/g) ?? []).length) % 2 === 1) {
+        if (((stripped.match(/\*\*/g) ?? []).length) % 2 === 1) {
             addIssue(lineIndex, "unclosed-bold", "warning", "odd number of '**' — bold segment may be unclosed");
         }
-        if (((text.match(/~~/g) ?? []).length) % 2 === 1) {
+        if (((stripped.match(/~~/g) ?? []).length) % 2 === 1) {
             addIssue(lineIndex, "unclosed-strikethrough", "warning", "odd number of '~~' — strikethrough may be unclosed");
         }
     };
@@ -321,6 +411,8 @@ function parseBlocks(source: string, ctx: Ctx): string {
             out.push(`</${listType}>`);
             listType = null;
         }
+        listOpenIndex = null;
+        listHasTaskClass = false;
     };
     const emitFence = (): void => {
         const langClass = fenceLang !== "" ? ` class="language-${fenceLang}"` : "";
@@ -419,7 +511,7 @@ function parseBlocks(source: string, ctx: Ctx): string {
             continue;
         }
 
-        // -- list items ---------------------------------------------------------
+        // -- list items (GFM task-list markers supported) ------------------------
         const ulItem = /^ {0,3}[*+-][ \t]+(.*)$/.exec(line);
         const olItem = /^ {0,3}\d{1,9}[.)][ \t]+(.*)$/.exec(line);
         if (ulItem !== null || olItem !== null) {
@@ -432,12 +524,75 @@ function parseBlocks(source: string, ctx: Ctx): string {
                 closeList();
                 out.push(`<${type}>`);
                 listType = type;
+                listOpenIndex = out.length - 1;
+                listHasTaskClass = false;
             }
             const text = (ulItem ?? olItem)![1]!;
+            const task = /^\[([ xX])\](?:[ \t]+(.*))?$/.exec(text);
+            if (task !== null) {
+                const checked = task[1] !== " ";
+                const label = task[2] ?? "";
+                if (listOpenIndex !== null && !listHasTaskClass) {
+                    out[listOpenIndex] = `<${type} class="contains-task-list">`;
+                    listHasTaskClass = true;
+                }
+                inlineChecks(label, i);
+                ctx.words += countWords(label);
+                const box = `<input type="checkbox" class="task-list-item-checkbox"${checked ? " checked" : ""} disabled>`;
+                out.push(`<li class="task-list-item">${box}${label === "" ? "" : ` ${inline(label, ctx.safe)}`}</li>`);
+                continue;
+            }
             inlineChecks(text, i);
             ctx.words += countWords(text);
             out.push(`<li>${inline(text, ctx.safe)}</li>`);
             continue;
+        }
+
+        // -- GFM tables ----------------------------------------------------------
+        // A pipe row is only a table when the next line is a delimiter row with
+        // the same column count; otherwise it stays ordinary paragraph text.
+        const headerCells = splitTableRow(line);
+        if (headerCells !== null && i + 1 < lines.length) {
+            const aligns = parseDelimiterRow(lines[i + 1]!);
+            if (aligns !== null && aligns.length === headerCells.length) {
+                flushParagraph();
+                closeList();
+                const headerLine = i;
+                i += 2; // skip header + delimiter row
+                const bodyRows: { cells: string[]; line: number }[] = [];
+                while (i < lines.length) {
+                    const cells = splitTableRow(lines[i]!);
+                    if (cells === null) break;
+                    bodyRows.push({ cells, line: i });
+                    i++;
+                }
+                i--; // compensate for the for-loop increment
+
+                const renderRow = (cells: string[], tag: "th" | "td", lineIndex: number): string => {
+                    const rendered = cells.map((cell, idx) => {
+                        inlineChecks(cell, lineIndex);
+                        ctx.words += countWords(cell);
+                        return `<${tag}${alignStyle(aligns[idx] ?? null)}>${inline(cell, ctx.safe)}</${tag}>`;
+                    });
+                    return `<tr>\n${rendered.join("\n")}\n</tr>`;
+                };
+
+                const table = ["<table>", "<thead>", renderRow(headerCells, "th", headerLine), "</thead>"];
+                if (bodyRows.length > 0) {
+                    const rows = bodyRows.map((row) => {
+                        if (row.cells.length > headerCells.length) {
+                            addIssue(row.line, "table-ragged", "warning", `table row has ${row.cells.length} cells but the header has ${headerCells.length} — ${row.cells.length - headerCells.length} extra cell(s) are dropped`);
+                        }
+                        const cells = row.cells.slice(0, headerCells.length);
+                        while (cells.length < headerCells.length) cells.push("");
+                        return renderRow(cells, "td", row.line);
+                    });
+                    table.push("<tbody>", rows.join("\n"), "</tbody>");
+                }
+                table.push("</table>");
+                out.push(table.join("\n"));
+                continue;
+            }
         }
 
         // -- raw HTML passthrough line --------------------------------------------

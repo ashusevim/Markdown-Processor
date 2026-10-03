@@ -16,7 +16,7 @@
  *   info    — deliberate repairs or unsupported-syntax notices; never blocks --strict
  */
 export type IssueSeverity = "warning" | "info";
-export type IssueCode = "unclosed-fence" | "unclosed-inline-code" | "unclosed-bold" | "unclosed-strikethrough" | "heading-skip" | "list-interrupted" | "mixed-list-markers" | "frontmatter-unsupported" | "html-escaped" | "repaired-frontmatter-fence" | "repaired-heading-space" | "repaired-proved-block";
+export type IssueCode = "unclosed-fence" | "unclosed-inline-code" | "unclosed-bold" | "unclosed-strikethrough" | "heading-skip" | "list-interrupted" | "mixed-list-markers" | "frontmatter-unsupported" | "html-escaped" | "table-ragged" | "repaired-frontmatter-fence" | "repaired-heading-space" | "repaired-proved-block" | "repaired-table-delimiter";
 export interface Issue {
     /** 1-based source line where the issue was detected. */
     line: number;

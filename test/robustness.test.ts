@@ -55,6 +55,34 @@ test("same-line issues keep their natural insertion order", () => {
     );
 });
 
+// -- inline code spans (CommonMark backtick runs) ---------------------------------
+
+test("double-backtick spans may contain a backtick", () => {
+    assert.equal(parseMarkdown("use ``a `b` c`` here"), "<p>use <code>a `b` c</code> here</p>");
+});
+
+test("a single-backtick span may contain a triple-backtick run", () => {
+    assert.equal(parseMarkdown("wrap it in ` ```yaml ` here"), "<p>wrap it in <code>```yaml</code> here</p>");
+});
+
+test("nested backticks no longer trigger the unpaired-backtick warning", () => {
+    const r = parseMarkdownDetail("frontmatter wrapped in a ` ```yaml ` fence → unwrapped");
+    assert.deepEqual(r.issues, []);
+});
+
+test("a code span keeps its content verbatim, including a lone space", () => {
+    assert.equal(parseMarkdown("`` ` `` is a backtick"), "<p><code>`</code> is a backtick</p>");
+});
+
+test("an actually unpaired backtick still warns", () => {
+    const r = parseMarkdownDetail("dangling `backtick here");
+    assert.equal(r.issues.find((entry) => entry.code === "unclosed-inline-code")!.line, 1);
+});
+
+test("code spans still win over emphasis inside them", () => {
+    assert.equal(parseMarkdown("`**not bold**`"), "<p><code>**not bold**</code></p>");
+});
+
 // -- unicode / encoding robustness ------------------------------------------------
 
 test("unicode, emoji and CJK pass through unharmed", () => {

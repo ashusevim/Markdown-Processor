@@ -57,8 +57,10 @@ Issue codes:
   mixed-list-markers      list marker style switched mid-list
   frontmatter-unsupported '---' frontmatter detected; not supported yet
   html-escaped            raw HTML was escaped in safe mode (--unsafe keeps it)
+  table-ragged            table row has more cells than the header — extras dropped
   repaired-*              LLM artifact fixed by --fix-llm (heading space,
-                          fence-wrapped frontmatter, proved blocks)
+                          fence-wrapped frontmatter, proved blocks, table
+                          delimiter rows with the wrong column count)
 `;
 
 /** Thrown by parseArgs for unrecognized options; maps to exit code 2. */

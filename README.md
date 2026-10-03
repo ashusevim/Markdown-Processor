@@ -12,7 +12,7 @@ Converts Markdown to clean, semantic HTML fragments on stdout — built for pipe
 - **Tells you the truth** — render-affecting problems come back as line-numbered warnings (`--strict`, `--report json`), not silently wrong HTML.
 - **Library and CLI in one** — the CLI is a thin wrapper around a pure parser module.
 
-> Roadmap: marcus is becoming the *trust-boundary* markdown CLI — see [RESEARCH.md](RESEARCH.md). ✅ Phase 1 correctness rework · ✅ Phase 2 diagnostics engine · ✅ Phase 3 safe by default · ✅ Phase 4 LLM-output repair pack.
+> Roadmap: marcus is becoming the *trust-boundary* markdown CLI — see [RESEARCH.md](RESEARCH.md). ✅ Phase 1 correctness rework · ✅ Phase 2 diagnostics engine · ✅ Phase 3 safe by default · ✅ Phase 4 LLM-output repair pack · ✅ Phase 5 GFM tables + task lists.
 
 ## Install
 
@@ -72,12 +72,14 @@ parseMarkdown("# hi\n\n**bold** and [a link](https://ex.com)");
 - Blockquotes: consecutive `>` lines group into one blockquote; contents are parsed (headings/lists inside quotes work)
 - Unordered lists: `*` / `-` / `+` item
 - Ordered lists: `1.` or `1)` item
+- Task lists: `- [ ] todo` / `- [x] done` → inert disabled checkboxes (GFM)
+- Tables: GFM pipe tables with `:---` / `:-:` / `---:` column alignment; `\|` escapes a literal pipe
 - Code fences: ` ```lang ` … ` ``` ` (also `~~~`); content is HTML-escaped, language becomes `class="language-…"`
 - Links: `[text](url "title")` and angle autolinks `<https://…>`
 - Images: `![alt](src "title")`
 - Bold: `**text**` / `__text__` · Italic: `*text*` / `_text_` · Bold+italic: `***text***`
 - Strikethrough: `~~text~~`
-- Inline code: `` `code` `` (HTML inside is escaped)
+- Inline code: `` `code` `` and multi-backtick spans (``` ``a `b` c`` ```); HTML inside is escaped
 - Paragraphs: consecutive text lines are wrapped in `<p>`; blank lines separate them
 - Raw HTML: escaped to visible text by default (safe — script tags become inert text); `--unsafe` passes it through verbatim
 - Input robustness: a leading BOM is dropped, CRLF/CR line endings are normalized, unicode/emoji pass through untouched
@@ -105,6 +107,7 @@ marcus: doc.md:5: warning [unclosed-fence]: code fence opened here is never clos
 | `heading-skip` | heading level jumps (e.g. `h1` → `h4`), breaking the document outline |
 | `list-interrupted` | a non-list line implicitly closed an open list |
 | `mixed-list-markers` | list marker style switched mid-list |
+| `table-ragged` | table row has more cells than the header — the extras are dropped |
 | `frontmatter-unsupported` | `---` frontmatter detected; not supported yet (renders as `<hr>`) |
 | `html-escaped` | raw HTML was neutralized in safe mode (`--unsafe` keeps it) |
 | `repaired-*` | LLM artifact fixed by `--fix-llm` (info-level, never blocks) |
@@ -142,6 +145,7 @@ LLM-generated markdown breaks in known, repeated ways (unclosed fences, mangled 
 | `repaired-heading-space` | `##Title` → `## Title` |
 | `repaired-frontmatter-fence` | frontmatter wrapped in a ` ```yaml ` fence → unwrapped |
 | `repaired-proved-block` | stray ` proved` line (the classic artifact) → ` proved` |
+| `repaired-table-delimiter` | `\| a \| b \| c \|` with a `\| --- \|` delimiter → delimiter resized so the table renders |
 
 Repairs are conservative by design: code fences are never touched, prose is never rewritten (only whole-line artifact matches), and line numbers stay stable. Combined with safe-by-default, the pipeline for untrusted model output is:
 
@@ -160,7 +164,7 @@ const { html, issues, headings, words } = parseMarkdownDetail(source);
 ## Development
 
 ```bash
-npm test        # builds, then runs the node:test suite (109 tests)
+npm test        # builds, then runs the node:test suite (149 tests)
 npm run build   # tsc → dist/
 npm start -- file.md
 ```
@@ -176,7 +180,8 @@ test/*.test.ts   node:test suite (runs TS directly via Node type stripping)
 
 ## Limitations (known, deliberate)
 
-- No nested lists, tables, task lists or footnotes yet — planned alongside the phase 4 work.
+- No nested lists or footnotes yet — flattening is documented, and nested input still renders (items simply don't nest).
+- Task-list checkboxes are inert (`disabled`) by design: marcus never ships interactive form controls into rendered documents.
 - Frontmatter (`---` at the top) currently renders as a thematic break (reported as info).
 - Safe mode is *escape-all*, not an allowlist sanitizer: no HTML survives by default (even harmless `<b>`). For fine-grained sanitization with `--unsafe`, pipe the output through a dedicated sanitizer.
 - A blank line inside a list keeps the list open but does not create loose (`<p>`-in-`<li>`) items.
